@@ -1,0 +1,118 @@
+{
+  "project_name": "PreFlight",
+  "project_summary": "Adversarial pre-implementation architecture validator, GitHub prior-art & pain-point scout, and HTML/Mermaid.js Blueprint generator.",
+  "target_runtime": "Host AI Agent + Python 3.10+",
+  "tech_stack": [
+    "Agent Skill (SKILL.md)",
+    "Python 3.10+",
+    "SQLite3 Repo Cache",
+    "GitHub REST API",
+    "Mermaid.js + HTML5"
+  ],
+  "bottlenecks": [],
+  "created_at": "2026-10-28T00:25:46+00:00",
+  "updated_at": "2026-10-28T00:25:46+00:00",
+  "dimensions": {
+    "problem": {
+      "label": "Problem & User Pain",
+      "score": 20,
+      "status": "stress-tested",
+      "summary": "Eliminates yes-man AI validation and post-hoc-only diagramming by forcing Socratic architecture grilling and real GitHub issue pain-point mining before code is written.",
+      "edge_cases": [
+        "Developers jumping straight to code without checking Graveyard Repos",
+        "Post-hoc tools (GitDiagram/DeepWiki) require an existing repo and cannot validate pre-code ideas"
+      ]
+    },
+    "scope": {
+      "label": "Scope & Non-Goals",
+      "score": 20,
+      "status": "stress-tested",
+      "summary": "Scoped as a native Agent Skill (SKILL.md + deterministic Python scripts for state, GitHub scouting, and HTML blueprint rendering) that hands off into /to-spec, /to-tickets, and /tdd.",
+      "edge_cases": [
+        "Avoids duplicating host LLM orchestration inside a separate Gemini CLI loop"
+      ]
+    },
+    "memory": {
+      "label": "State & Persistence (Memory)",
+      "score": 20,
+      "status": "stress-tested",
+      "summary": "Hybrid 3-tier persistence: git-friendly JSON/Markdown for Working State (.preflight/state.json) and Decision Ledger (docs/adr/*.md + .preflight/decisions.json), plus SQLite (.preflight/cache.db) with 7-day TTL for GitHub Repo Cache.",
+      "edge_cases": [
+        "Downstream coding agents read docs/adr/ and GLOSSARY.md natively without querying SQLite"
+      ]
+    },
+    "bottlenecks": {
+      "label": "Bottlenecks & Failure Modes",
+      "score": 20,
+      "status": "stress-tested",
+      "summary": "Mitigates GitHub API rate limits (60/hr unauthenticated) via gh auth token -> GITHUB_TOKEN -> unauthenticated fallback chain, SQLite TTL caching, and noise/spam repo filtering.",
+      "edge_cases": [
+        "Unauthenticated fallback automatically reduces query breadth to prevent HTTP 403 rate-limit crashes",
+        "Keyword-stuffed spam repos are filtered out via in:name,description scoping"
+      ]
+    },
+    "differentiation": {
+      "label": "Prior-Art Differentiation",
+      "score": 20,
+      "status": "stress-tested",
+      "summary": "Directly solves top mined open issues in OpenSpec (#1176 built-in HTML artifact viewer, #900 SDD-to-TDD bridge) and GitDiagram (#4 & #112 local CLI/repo execution) while avoiding the rigid monolithic process that caused gsd-build/get-shit-done (64k stars) to be archived.",
+      "edge_cases": [
+        "Combines live GitHub Graveyard & Pain-Point Mining with mattpocock/skills handoff"
+      ]
+    }
+  },
+  "red_team_critiques": [
+    {
+      "title": "Double-LLM Orchestration Trap",
+      "severity": "critical",
+      "attack": "Building a standalone gemini-2.5-flash CLI inside an AI coding workspace forces users to manage duplicate API keys, splits conversation history, and blocks native file/subagent tool access.",
+      "mitigation": "ADR-0001: Package PreFlight as a host-orchestrated Agent Skill (SKILL.md) paired with deterministic Python helper scripts."
+    },
+    {
+      "title": "GitHub Search Rate-Limit & Keyword-Spam Poisoning",
+      "severity": "high",
+      "attack": "Unauthenticated GitHub Search API allows only 10 req/min (60/hr), and broad README searches return keyword-stuffed political/spam repos that pollute Pain-Point Mining.",
+      "mitigation": "Authenticate via gh auth token -> GITHUB_TOKEN -> unauthenticated fallback, scope queries with in:name,description, filter spam heuristics, and cache in SQLite (.preflight/cache.db) with a 7-day TTL."
+    },
+    {
+      "title": "Opaque SQLite State Hiding ADRs from Coding Agents",
+      "severity": "high",
+      "attack": "Storing ADRs and Working State exclusively inside a binary SQLite file prevents downstream skills (/to-spec, /to-tickets, /tdd) and git diffs from inspecting architectural decisions.",
+      "mitigation": "ADR-0002: Hybrid persistence \u2014 Markdown ADRs (docs/adr/) + JSON state (.preflight/*.json) for humans/agents, and SQLite strictly for Tier 3 Repo Cache."
+    }
+  ],
+  "system_design": {
+    "topology_mermaid": "flowchart TD\n    Dev([\"Developer\"]) -->|\"/preflight or idea pitch\"| Skill[\"PreFlight Agent Skill (SKILL.md)\"]\n    Skill -->|\"Round 1..N Frontier Questions\"| Griller[\"Socratic Griller & Readiness Gate (5x20% Rubric)\"]\n    Skill -->|\"Inline Term Resolution\"| Glossary[\"GLOSSARY.md (Domain Model)\"]\n    Griller -->|\"state.py\"| StateJSON[(\".preflight/state.json & decisions.json\")]\n    Griller -->|\"state.py add-decision\"| ADRs[\"docs/adr/NNNN-*.md\"]\n    Skill -->|\"Async after Round 1 (scout.py)\"| Scout[\"GitHub Deep-Scout & Pain-Point Miner\"]\n    Scout <-->|\"7-day TTL\"| CacheDB[(\".preflight/cache.db SQLite3\")]\n    Scout -->|\"Active Incumbents, Graveyard, Pain Points\"| PriorArtJSON[(\".preflight/prior-art.json\")]\n    PriorArtJSON -->|\"Live Ammunition for Round 2+\"| Griller\n    StateJSON & PriorArtJSON -->|\"Gate >= 80% (render_blueprint.py)\"| Blueprint[\"blueprint_report.html (Interactive Mermaid + Red-Team)\"]\n    Blueprint -->|\"Downstream Handoff\"| Downstream[\"/to-spec -> /to-tickets -> /implement + /tdd\"]",
+    "sequence_mermaid": "sequenceDiagram\n    actor Dev as Developer\n    participant Agent as Host Agent (/preflight)\n    participant State as state.py (.preflight/ + docs/adr/)\n    participant Scout as scout.py (GitHub API + SQLite Cache)\n    participant Render as render_blueprint.py\n    Dev->>Agent: Pitch project idea\n    Agent->>State: init project & seed GLOSSARY.md\n    Agent->>Dev: Round 1 Frontier Questions (Problem, Scope, Memory)\n    Dev->>Agent: Round 1 Answers\n    par Async GitHub Prior-Art Scout\n        Agent->>Scout: Execute scoped repo & open-issue queries\n        Scout-->>Agent: Active Incumbents, Graveyard Repos (>365d), Mined Pain Points (+1 issues)\n    and Rubric & ADR Recording\n        Agent->>State: update-dimension & add-decision (ADR-0001, ADR-0002)\n    end\n    Agent->>Dev: Round 2+ Frontier Questions armed with Mined Pain Points\n    Dev->>Agent: Lock remaining architectural trade-offs\n    Agent->>State: Readiness Score reaches >= 80% (Gate Unlocked)\n    Agent->>Render: Render standalone blueprint_report.html\n    Render-->>Dev: Interactive HTML Blueprint + Handoff to /to-spec & /to-tickets",
+    "options_matrix": [
+      {
+        "option": "Native Agent Skill + Python Helpers (Selected)",
+        "pros": "Zero extra LLM API keys; native access to host subagents; deterministic SQLite caching & HTML rendering.",
+        "cons": "Requires host AI coding agent (Antigravity, Claude Code, Cursor).",
+        "verdict": "WINNER (ADR-0001)"
+      },
+      {
+        "option": "Standalone gemini-2.5-flash Rich CLI",
+        "pros": "Runs in a bare terminal without an IDE agent.",
+        "cons": "Duplicates host LLM loop; requires separate API key; isolated from workspace agent skills.",
+        "verdict": "Rejected"
+      },
+      {
+        "option": "Post-Hoc Repo Visualizer (e.g. GitDiagram / DeepWiki)",
+        "pros": "Instant diagram from existing code.",
+        "cons": "Useless before code is written; zero adversarial grilling or issue pain-point mining.",
+        "verdict": "Complementary / Different Phase"
+      }
+    ],
+    "implementation_steps": [
+      "1. Configure repo agent conventions (AGENTS.md, docs/agents/*, GLOSSARY.md, docs/adr/).",
+      "2. Implement Tier 1 & Tier 2 state & ADR ledger manager (skills/preflight/scripts/state.py).",
+      "3. Implement Tier 3 SQLite GitHub Deep-Scout & Pain-Point Miner (skills/preflight/scripts/scout.py).",
+      "4. Implement Readiness-Gated dark-mode HTML + Mermaid.js Blueprint renderer (skills/preflight/scripts/render_blueprint.py).",
+      "5. Package SKILL.md, verify with automated unit tests (tests/test_preflight.py), and install globally to ~/.gemini/config/skills/preflight."
+    ]
+  },
+  "readiness_score": 100,
+  "readiness_unlocked": true,
+  "forced_unlock": false
+}

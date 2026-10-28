@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PreFlight Blueprint — PreFlight</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0b0f19;
+    --panel: #111827;
+    --panel-alt: #1f2937;
+    --border: #374151;
+    --text: #f3f4f6;
+    --muted: #9ca3af;
+    --accent: #38bdf8;
+    --green: #10b981;
+    --amber: #f59e0b;
+    --red: #ef4444;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+    line-height: 1.6;
+    padding: 2rem;
+  }
+  .container { max-width: 1280px; margin: 0 auto; }
+  header {
+    background: linear-gradient(135deg, #111827 0%, #1e293b 100%);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 2rem;
+    margin-bottom: 1.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+  }
+  .title-group h1 { font-size: 2rem; letter-spacing: -0.02em; margin-bottom: 0.4rem; }
+  .title-group p { color: var(--muted); max-width: 760px; }
+  .meta-row { margin-top: 1rem; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+  .stack-pill {
+    background: #1e293b;
+    border: 1px solid #334155;
+    color: var(--accent);
+    padding: 0.2rem 0.65rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+  .score-box {
+    background: #0f172a;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem 1.5rem;
+    text-align: right;
+    min-width: 220px;
+  }
+  .score-number { font-size: 2.5rem; font-weight: 800; color: #10b981; line-height: 1.1; }
+  .score-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+  .tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.75rem;
+    flex-wrap: wrap;
+  }
+  .tab-btn {
+    background: var(--panel);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    padding: 0.55rem 1.1rem;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.9rem;
+    transition: all 0.15s ease;
+  }
+  .tab-btn.active, .tab-btn:hover {
+    color: var(--text);
+    border-color: var(--accent);
+    background: #1e293b;
+  }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 1rem; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+  }
+  .dim-header, .crit-header, .pp-header, .adr-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+    gap: 0.5rem;
+  }
+  .dim-title { font-weight: 700; font-size: 1.05rem; }
+  .dim-score { font-weight: 700; font-size: 0.9rem; }
+  .progress-track {
+    width: 100%;
+    height: 8px;
+    background: #1f2937;
+    border-radius: 999px;
+    overflow: hidden;
+    margin-bottom: 0.75rem;
+  }
+  .progress-fill { height: 100%; border-radius: 999px; }
+  .edge-list { margin-top: 0.6rem; padding-left: 1.2rem; color: var(--muted); font-size: 0.9rem; }
+  .badge {
+    padding: 0.15rem 0.55rem;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 700;
+  }
+  .badge-green { background: #10b98122; color: #34d399; border: 1px solid #10b98155; }
+  .badge-red { background: #ef444422; color: #f87171; border: 1px solid #ef444455; }
+  .badge-blue { background: #38bdf822; color: #38bdf8; border: 1px solid #38bdf855; }
+  table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; font-size: 0.92rem; }
+  th, td { padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; }
+  tr.graveyard-row { background: #ef44440a; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .muted { color: var(--muted); font-size: 0.9rem; }
+  .rejected { color: #fca5a5; margin-top: 0.35rem; }
+  .mermaid-box {
+    background: #0f172a;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.5rem;
+    overflow-x: auto;
+    margin-top: 0.75rem;
+  }
+  .step-list { padding-left: 1.4rem; }
+  .step-list li { margin-bottom: 0.6rem; }
+  h2.section-title { font-size: 1.35rem; margin: 1.25rem 0 0.75rem; color: #e2e8f0; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="title-group">
+      <div class="score-label">PREFLIGHT ARCHITECTURE &amp; PRIOR-ART BLUEPRINT</div>
+      <h1>PreFlight</h1>
+      <p>Adversarial pre-implementation architecture validator, GitHub prior-art &amp; pain-point scout, and HTML/Mermaid.js Blueprint generator.</p>
+      <div class="meta-row">
+        <span class="stack-pill">Runtime: Host AI Agent + Python 3.10+</span>
+        <span class="stack-pill">Agent Skill (SKILL.md)</span><span class="stack-pill">Python 3.10+</span><span class="stack-pill">SQLite3 Repo Cache</span><span class="stack-pill">GitHub REST API</span><span class="stack-pill">Mermaid.js + HTML5</span>
+      </div>
+    </div>
+    <div class="score-box">
+      <div class="score-label">READINESS GATE PASSED</div>
+      <div class="score-number">100%</div>
+      <div class="muted">5-Dimension Rubric</div>
+    </div>
+  </header>
+
+  <div class="tabs">
+    <button class="tab-btn active" onclick="showTab('tab-scorecard', this)">1. Readiness &amp; Red-Team</button>
+    <button class="tab-btn" onclick="showTab('tab-prior-art', this)">2. Prior-Art &amp; Pain Points (18)</button>
+    <button class="tab-btn" onclick="showTab('tab-design', this)">3. System Topology &amp; Sequence</button>
+    <button class="tab-btn" onclick="showTab('tab-ledger', this)">4. Decision Ledger (2) &amp; Next Steps</button>
+  </div>
+
+  <!-- TAB 1: SCORECARD & RED TEAM -->
+  <section id="tab-scorecard" class="tab-panel active">
+    <h2 class="section-title">5-Dimension Grilling Scorecard</h2>
+    <div class="grid-2">
+      
+            <div class="card dim-card">
+                <div class="dim-header">
+                    <span class="dim-title">Problem &amp; User Pain</span>
+                    <span class="dim-score" style="color:#10b981">20/20 (stress-tested)</span>
+                </div>
+                <div class="progress-track">
+                    <div class="progress-fill" style="width:100%; background:#10b981"></div>
+                </div>
+                <p class="dim-summary">Eliminates yes-man AI validation and post-hoc-only diagramming by forcing Socratic architecture grilling and real GitHub issue pain-point mining before code is written.</p>
+                <ul class="edge-list"><li>Developers jumping straight to code without checking Graveyard Repos</li><li>Post-hoc tools (GitDiagram/DeepWiki) require an existing repo and cannot validate pre-code ideas</li></ul>
+            </div>
+            
+            <div class="card dim-card">
+                <div class="dim-header">
+                    <span class="dim-title">Scope &amp; Non-Goals</span>
+                    <span class="dim-score" style="color:#10b981">20/20 (stress-tested)</span>
+                </div>
+                <div class="progress-track">
+                    <div class="progress-fill" style="width:100%; background:#10b981"></div>
+                </div>
+                <p class="dim-summary">Scoped as a native Agent Skill (SKILL.md + deterministic Python scripts for state, GitHub scouting, and HTML blueprint rendering) that hands off into /to-spec, /to-tickets, and /tdd.</p>
+                <ul class="edge-list"><li>Avoids duplicating host LLM orchestration inside a separate Gemini CLI loop</li></ul>
+            </div>
+            
+            <div class="card dim-card">
+                <div class="dim-header">
+                    <span class="dim-title">State &amp; Persistence (Memory)</span>
+                    <span class="dim-score" style="color:#10b981">20/20 (stress-tested)</span>
+                </div>
+                <div class="progress-track">
+                    <div class="progress-fill" style="width:100%; background:#10b981"></div>
+                </div>
+                <p class="dim-summary">Hybrid 3-tier persistence: git-friendly JSON/Markdown for Working State (.preflight/state.json) and Decision Ledger (docs/adr/*.md + .preflight/decisions.json), plus SQLite (.preflight/cache.db) with 7-day TTL for GitHub Repo Cache.</p>
+                <ul class="edge-list"><li>Downstream coding agents read docs/adr/ and GLOSSARY.md natively without querying SQLite</li></ul>
+            </div>
+            
+            <div class="card dim-card">
+                <div class="dim-header">
+                    <span class="dim-title">Bottlenecks &amp; Failure Modes</span>
+                    <span class="dim-score" style="color:#10b981">20/20 (stress-tested)</span>
+                </div>
+                <div class="progress-track">
+                    <div class="progress-fill" style="width:100%; background:#10b981"></div>
+                </div>
+                <p class="dim-summary">Mitigates GitHub API rate limits (60/hr unauthenticated) via gh auth token -&gt; GITHUB_TOKEN -&gt; unauthenticated fallback chain, SQLite TTL caching, and noise/spam repo filtering.</p>
+                <ul class="edge-list"><li>Unauthenticated fallback automatically reduces query breadth to prevent HTTP 403 rate-limit crashes</li><li>Keyword-stuffed spam repos are filtered out via in:name,description scoping</li></ul>
+            </div>
+            
+            <div class="card dim-card">
+                <div class="dim-header">
+                    <span class="dim-title">Prior-Art Differentiation</span>
+                    <span class="dim-score" style="color:#10b981">20/20 (stress-tested)</span>
+                </div>
+                <div class="progress-track">
+                    <div class="progress-fill" style="width:100%; background:#10b981"></div>
+                </div>
+                <p class="dim-summary">Directly solves top mined open issues in OpenSpec (#1176 built-in HTML artifact viewer, #900 SDD-to-TDD bridge) and GitDiagram (#4 &amp; #112 local CLI/repo execution) while avoiding the rigid monolithic process that caused gsd-build/get-shit-done (64k stars) to be archived.</p>
+                <ul class="edge-list"><li>Combines live GitHub Graveyard &amp; Pain-Point Mining with mattpocock/skills handoff</li></ul>
+            </div>
+            
+    </div>
+    <h2 class="section-title">Adversarial Red-Team Critique</h2>
+    
+                <div class="card critique-card" style="border-left: 4px solid #ef4444">
+                    <div class="crit-header">
+                        <h4>Double-LLM Orchestration Trap</h4>
+                        <span class="badge" style="background:#ef444422; color:#ef4444; border:1px solid #ef444455">CRITICAL</span>
+                    </div>
+                    <p><strong>Failure Mode / Attack Vector:</strong> Building a standalone gemini-2.5-flash CLI inside an AI coding workspace forces users to manage duplicate API keys, splits conversation history, and blocks native file/subagent tool access.</p>
+                    <p><strong>Architectural Mitigation:</strong> ADR-0001: Package PreFlight as a host-orchestrated Agent Skill (SKILL.md) paired with deterministic Python helper scripts.</p>
+                </div>
+                
+                <div class="card critique-card" style="border-left: 4px solid #f97316">
+                    <div class="crit-header">
+                        <h4>GitHub Search Rate-Limit &amp; Keyword-Spam Poisoning</h4>
+                        <span class="badge" style="background:#f9731622; color:#f97316; border:1px solid #f9731655">HIGH</span>
+                    </div>
+                    <p><strong>Failure Mode / Attack Vector:</strong> Unauthenticated GitHub Search API allows only 10 req/min (60/hr), and broad README searches return keyword-stuffed political/spam repos that pollute Pain-Point Mining.</p>
+                    <p><strong>Architectural Mitigation:</strong> Authenticate via gh auth token -&gt; GITHUB_TOKEN -&gt; unauthenticated fallback, scope queries with in:name,description, filter spam heuristics, and cache in SQLite (.preflight/cache.db) with a 7-day TTL.</p>
+                </div>
+                
+                <div class="card critique-card" style="border-left: 4px solid #f97316">
+                    <div class="crit-header">
+                        <h4>Opaque SQLite State Hiding ADRs from Coding Agents</h4>
+                        <span class="badge" style="background:#f9731622; color:#f97316; border:1px solid #f9731655">HIGH</span>
+                    </div>
+                    <p><strong>Failure Mode / Attack Vector:</strong> Storing ADRs and Working State exclusively inside a binary SQLite file prevents downstream skills (/to-spec, /to-tickets, /tdd) and git diffs from inspecting architectural decisions.</p>
+                    <p><strong>Architectural Mitigation:</strong> ADR-0002: Hybrid persistence — Markdown ADRs (docs/adr/) + JSON state (.preflight/*.json) for humans/agents, and SQLite strictly for Tier 3 Repo Cache.</p>
+                </div>
+                
+  </section>
+
+  <!-- TAB 2: PRIOR ART & PAIN POINTS -->
+  <section id="tab-prior-art" class="tab-panel">
+    <h2 class="section-title">GitHub Prior-Art Matrix (Active Incumbents vs. Graveyard Repos)</h2>
+    <div class="card" style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>Repository</th>
+            <th>Stars</th>
+            <th>Velocity</th>
+            <th>Last Push</th>
+            <th>Classification</th>
+            <th>Summary</th>
+          </tr>
+        </thead>
+        <tbody>
+          
+            <tr>
+                <td><a href="https://github.com/Fission-AI/OpenSpec" target="_blank" rel="noopener">Fission-AI/OpenSpec</a></td>
+                <td>⭐ 73,169</td>
+                <td>4899.71/mo</td>
+                <td>0d ago</td>
+                <td><span class="badge badge-green">Active Incumbent</span></td>
+                <td>Spec-driven development (SDD) for AI coding assistants.</td>
+            </tr>
+            
+            <tr>
+                <td><a href="https://github.com/cathrynlavery/diagram-design" target="_blank" rel="noopener">cathrynlavery/diagram-design</a></td>
+                <td>⭐ 61,786</td>
+                <td>9554.54/mo</td>
+                <td>0d ago</td>
+                <td><span class="badge badge-green">Active Incumbent</span></td>
+                <td>Editorial diagram design for Claude Code, Codex, GitHub Copilot, Cursor, Factory Droid, Qoder, and Pi. 45 diagram types. Self-contained HTML + SVG. No shadows. No Mermaid slop.</td>
+            </tr>
+            
+            <tr>
+                <td><a href="https://github.com/ahmedkhaleel2004/gitdiagram" target="_blank" rel="noopener">ahmedkhaleel2004/gitdiagram</a></td>
+                <td>⭐ 18,537</td>
+                <td>816.61/mo</td>
+                <td>1d ago</td>
+                <td><span class="badge badge-green">Active Incumbent</span></td>
+                <td>Visualize any GitHub codebase: free interactive architecture diagrams and one-minute explainer videos. Replace &#x27;hub&#x27; with &#x27;diagram&#x27; in any GitHub URL.</td>
+            </tr>
+            
+            <tr>
+                <td><a href="https://github.com/Agents365-ai/drawio-skill" target="_blank" rel="noopener">Agents365-ai/drawio-skill</a></td>
+                <td>⭐ 10,401</td>
+                <td>1311.05/mo</td>
+                <td>16d ago</td>
+                <td><span class="badge badge-green">Active Incumbent</span></td>
+                <td>Agent skill that turns natural language, code, Terraform/K8s, SQL, OpenAPI, AsyncAPI, Protobuf and GraphQL sources into editable, tested draw.io architecture diagrams: incremental sync, multi-view projection, drift diff, CI architecture tests, whiteboard derasterize, interactive HTML/PPTX/Mermaid exports.</td>
+            </tr>
+            
+            <tr>
+                <td><a href="https://github.com/buildermethods/agent-os" target="_blank" rel="noopener">buildermethods/agent-os</a></td>
+                <td>⭐ 5,555</td>
+                <td>356.09/mo</td>
+                <td>20d ago</td>
+                <td><span class="badge badge-green">Active Incumbent</span></td>
+                <td>Agent OS is a system for injecting your codebase standards and writing better specs for spec-driven development.</td>
+            </tr>
+            
+            <tr>
+                <td><a href="https://github.com/Pimzino/spec-workflow-mcp" target="_blank" rel="noopener">Pimzino/spec-workflow-mcp</a></td>
+                <td>⭐ 4,302</td>
+                <td>289.37/mo</td>
+                <td>116d ago</td>
+                <td><span class="badge badge-green">Active Incumbent</span></td>
+                <td>A Model Context Protocol (MCP) server that provides structured spec-driven development workflow tools for AI-assisted software development, featuring a real-time web dashboard and VSCode extension for monitoring and managing your project&#x27;s progress directly in your development environment.</td>
+            </tr>
+            
+            <tr>
+                <td><a href="https://github.com/oh-my-mermaid/oh-my-mermaid" target="_blank" rel="noopener">oh-my-mermaid/oh-my-mermaid</a></td>
+                <td>⭐ 3,349</td>
+                <td>458.77/mo</td>
+                <td>203d ago</td>
+                <td><span class="badge badge-green">Active Incumbent</span></td>
+                <td>Turn complex codebases into clear, navigable architecture diagrams with Claude Code.</td>
+            </tr>
+            
+            <tr>
+                <td><a href="https://github.com/reladraw/reladraw" target="_blank" rel="noopener">reladraw/reladraw</a></td>
+                <td>⭐ 1,149</td>
+                <td>689.4/mo</td>
+                <td>3d ago</td>
+                <td><span class="badge badge-green">Active Incumbent</span></td>
+                <td>A text diagram language where you say where things go. Playground: reladraw.github.io/reladraw</td>
+            </tr>
+            
+            <tr>
+                <td><a href="https://github.com/wavedrom/wavedrom.github.io" target="_blank" rel="noopener">wavedrom/wavedrom.github.io</a></td>
+                <td>⭐ 1,117</td>
+                <td>7.36/mo</td>
+                <td>2d ago</td>
+                <td><span class="badge badge-green">Active Incumbent</span></td>
+                <td>Digital timing diagram editor</td>
+            </tr>
+            
+            <tr>
+                <td><a href="https://github.com/openflowkit/openflowkit" target="_blank" rel="noopener">openflowkit/openflowkit</a></td>
+                <td>⭐ 916</td>
+                <td>106.1/mo</td>
+                <td>5d ago</td>
+                <td><span class="badge badge-green">Active Incumbent</span></td>
+                <td>Free, open-source diagram canvas. Draw it, write it as code (Mermaid, D2, Structurizr in), ask any AI model or a local one, let Claude Code edit it live over MCP, or map a GitHub repo with every arrow cited to a file and line. MIT, local-first, no account.</td>
+            </tr>
+            
+            <tr>
+                <td><a href="https://github.com/ThisIs-Developer/Markdown-Viewer" target="_blank" rel="noopener">ThisIs-Developer/Markdown-Viewer</a></td>
+                <td>⭐ 553</td>
+                <td>17.8/mo</td>
+                <td>0d ago</td>
+                <td><span class="badge badge-green">Active Incumbent</span></td>
+                <td>A Markdown Editor That Lives in Your Browser, Desktop, and a Single URL. Fast GitHub-style Markdown editing with live preview, diagrams, LaTeX, syntax highlighting, PDF export, and multi-tab support across web, desktop, and Docker.</td>
+            </tr>
+            
+            <tr>
+                <td><a href="https://github.com/alexanderop/walkthrough" target="_blank" rel="noopener">alexanderop/walkthrough</a></td>
+                <td>⭐ 149</td>
+                <td>17.13/mo</td>
+                <td>218d ago</td>
+                <td><span class="badge badge-green">Active Incumbent</span></td>
+                <td>A Claude Code skill that generates interactive HTML walkthroughs with clickable Mermaid diagrams to explain codebase features, flows, and architecture.</td>
+            </tr>
+            
+            <tr>
+                <td><a href="https://github.com/ZhongliangGuo/oop-architect" target="_blank" rel="noopener">ZhongliangGuo/oop-architect</a></td>
+                <td>⭐ 81</td>
+                <td>13.43/mo</td>
+                <td>156d ago</td>
+                <td><span class="badge badge-green">Active Incumbent</span></td>
+                <td>A Claude Code skill for OOP architecture planning and tracking — live Mermaid UML diagrams in CLAUDE.md that update as you code.</td>
+            </tr>
+            
+            <tr>
+                <td><a href="https://github.com/cheriftj/c4-model-skill" target="_blank" rel="noopener">cheriftj/c4-model-skill</a></td>
+                <td>⭐ 43</td>
+                <td>6.94/mo</td>
+                <td>185d ago</td>
+                <td><span class="badge badge-green">Active Incumbent</span></td>
+                <td>Interactive Claude Code skill for C4 architecture diagrams (Simon Brown&#x27;s model) — mode-driven workflow with Mermaid / Structurizr / PlantUML output and filesystem or MCP (Notion / Linear / Drive) destinations.</td>
+            </tr>
+            
+            <tr class="graveyard-row">
+                <td><a href="https://github.com/gsd-build/get-shit-done" target="_blank" rel="noopener">gsd-build/get-shit-done</a></td>
+                <td>⭐ 64,205</td>
+                <td>6076.18/mo</td>
+                <td>149d ago</td>
+                <td><span class="badge badge-red">Graveyard (Repository explicitly archived by maintainer)</span></td>
+                <td>A light-weight and powerful meta-prompting, context engineering and spec-driven development system for Claude Code by TÂCHES.</td>
+            </tr>
+            
+            <tr class="graveyard-row">
+                <td><a href="https://github.com/gsd-build/gsd-2" target="_blank" rel="noopener">gsd-build/gsd-2</a></td>
+                <td>⭐ 7,761</td>
+                <td>1012.3/mo</td>
+                <td>158d ago</td>
+                <td><span class="badge badge-red">Graveyard (Repository explicitly archived by maintainer)</span></td>
+                <td>A powerful meta-prompting, context engineering and spec-driven development system that enables agents to work for long periods of time autonomously without losing track of the big picture</td>
+            </tr>
+            
+            <tr class="graveyard-row">
+                <td><a href="https://github.com/Pimzino/claude-code-spec-workflow" target="_blank" rel="noopener">Pimzino/claude-code-spec-workflow</a></td>
+                <td>⭐ 3,855</td>
+                <td>248.18/mo</td>
+                <td>415d ago</td>
+                <td><span class="badge badge-red">Graveyard (No commits pushed in 415 days (&gt;365d threshold))</span></td>
+                <td>Automated workflows for Claude Code. Features spec-driven development for new features (Requirements → Design → Tasks → Implementation) and streamlined bug fix workflow for quick issue resolution (Report → Analyze → Fix → Verify).</td>
+            </tr>
+            
+            <tr class="graveyard-row">
+                <td><a href="https://github.com/asyncapi-archived-repos/cupid" target="_blank" rel="noopener">asyncapi-archived-repos/cupid</a></td>
+                <td>⭐ 51</td>
+                <td>0.77/mo</td>
+                <td>931d ago</td>
+                <td><span class="badge badge-red">Graveyard (Repository explicitly archived by maintainer)</span></td>
+                <td>A library that focuses on finding and analyzing the relationships between AsyncAPI documents. It outputs a map of the system architecture. Except for a default map, it is possible to get output as mermaid.js flow diagram, PlantUML class diagram and more to come.</td>
+            </tr>
+            
+        </tbody>
+      </table>
+    </div>
+
+    <h2 class="section-title">Pain-Point Mine (Top-Voted Open Issues from Incumbents)</h2>
+    <div class="grid-2">
+      
+            <div class="card pp-card">
+                <div class="pp-header">
+                    <a href="https://github.com/Fission-AI/OpenSpec/issues/697" target="_blank" rel="noopener" class="pp-link">
+                        Fission-AI/OpenSpec#697
+                    </a>
+                    <span class="pp-Metric">👍 32 &nbsp;|&nbsp; 💬 5</span>
+                </div>
+                <h4>Feedback: Support custom openspec/ directory path</h4>
+                <p class="muted">Allow config.yaml or env var to relocate the openspec/ folder to a custom path like ./ai/openspec/. In larger monorepos, keeping AI/spec tooling under a dedicated directory (e.g., ./ai/) helps reduce root-level clutter and keeps related concerns grouped together.</p>
+            </div>
+            
+            <div class="card pp-card">
+                <div class="pp-header">
+                    <a href="https://github.com/ahmedkhaleel2004/gitdiagram/issues/4" target="_blank" rel="noopener" class="pp-link">
+                        ahmedkhaleel2004/gitdiagram#4
+                    </a>
+                    <span class="pp-Metric">👍 22 &nbsp;|&nbsp; 💬 14</span>
+                </div>
+                <h4>Option to use it as a cli for local repo</h4>
+                <p class="muted">I think it would be useful to have this tool as a cli</p>
+            </div>
+            
+            <div class="card pp-card">
+                <div class="pp-header">
+                    <a href="https://github.com/Fission-AI/OpenSpec/issues/724" target="_blank" rel="noopener" class="pp-link">
+                        Fission-AI/OpenSpec#724
+                    </a>
+                    <span class="pp-Metric">👍 16 &nbsp;|&nbsp; 💬 5</span>
+                </div>
+                <h4>[Feature Request] Reverse-engineer specs from existing implementations (code-first workflow)</h4>
+                <p class="muted">## Problem Teams adopting OpenSpec often have members who prefer implementing features manually with minimal AI assistance. After implementation, they need a way to generate specs and documentation retroactively from the existing code. Currently, OpenSpec is optimized for a spec-...</p>
+            </div>
+            
+            <div class="card pp-card">
+                <div class="pp-header">
+                    <a href="https://github.com/Fission-AI/OpenSpec/issues/664" target="_blank" rel="noopener" class="pp-link">
+                        Fission-AI/OpenSpec#664
+                    </a>
+                    <span class="pp-Metric">👍 12 &nbsp;|&nbsp; 💬 1</span>
+                </div>
+                <h4>[Proposal]: Configurable specs path (`specsPath` in config.yaml)</h4>
+                <p class="muted">Add a `specsPath` option to `openspec/config.yaml` that allows projects to configure where their specs live, instead of the hardcoded `openspec/specs`. Includes cross-platform path normalization and `{{specsPath}}` placeholder support in schema and skill templates. ## Motivation ...</p>
+            </div>
+            
+            <div class="card pp-card">
+                <div class="pp-header">
+                    <a href="https://github.com/Fission-AI/OpenSpec/issues/1176" target="_blank" rel="noopener" class="pp-link">
+                        Fission-AI/OpenSpec#1176
+                    </a>
+                    <span class="pp-Metric">👍 11 &nbsp;|&nbsp; 💬 1</span>
+                </div>
+                <h4>feat: built-in HTML artifact generation for changes</h4>
+                <p class="muted">## Summary Add a built-in command (e.g. `openspec html &lt;change-name&gt;`) that generates a polished, self-contained HTML spec viewer for a change, analogous to how `openspec validate` or `openspec status` work today. ## Motivation Sharing a spec with stakeholders currently means sen...</p>
+            </div>
+            
+            <div class="card pp-card">
+                <div class="pp-header">
+                    <a href="https://github.com/Fission-AI/OpenSpec/issues/900" target="_blank" rel="noopener" class="pp-link">
+                        Fission-AI/OpenSpec#900
+                    </a>
+                    <span class="pp-Metric">👍 9 &nbsp;|&nbsp; 💬 6</span>
+                </div>
+                <h4>[Proposal] Optional test generation step bridging SDD and TDD</h4>
+                <p class="muted">Hi, my team and I have adopted OpenSpec as our standard development workflow — it&#x27;s been instrumental in helping us ship reliable code faster. As we&#x27;ve scaled our usage, one area where we still spend significant time is code review and verification. The specs already capture what...</p>
+            </div>
+            
+            <div class="card pp-card">
+                <div class="pp-header">
+                    <a href="https://github.com/ahmedkhaleel2004/gitdiagram/issues/67" target="_blank" rel="noopener" class="pp-link">
+                        ahmedkhaleel2004/gitdiagram#67
+                    </a>
+                    <span class="pp-Metric">👍 3 &nbsp;|&nbsp; 💬 2</span>
+                </div>
+                <h4>Upload Docker Image to Docker Hub or Github container registry (ghcr.io)</h4>
+                <p class="muted">**Description:** It would be highly beneficial to have the Docker image for this project uploaded to Docker Hub. This would make it easier for users to pull and deploy the container without needing to build it locally. **Reasons:** - Simplifies the setup process for users who wan...</p>
+            </div>
+            
+            <div class="card pp-card">
+                <div class="pp-header">
+                    <a href="https://github.com/ahmedkhaleel2004/gitdiagram/issues/112" target="_blank" rel="noopener" class="pp-link">
+                        ahmedkhaleel2004/gitdiagram#112
+                    </a>
+                    <span class="pp-Metric">👍 2 &nbsp;|&nbsp; 💬 0</span>
+                </div>
+                <h4>Support for local code repositories or self-hosted Git platforms</h4>
+                <p class="muted">Here’s a polished draft for your issue to request local deployment support in **GitDiagram**: --- **Title:** Support for local file-system &amp; self-hosted Git repositories **Description:** Thanks for this awesome project! I’d love the ability to run GitDiagram locally on private co...</p>
+            </div>
+            
+            <div class="card pp-card">
+                <div class="pp-header">
+                    <a href="https://github.com/ahmedkhaleel2004/gitdiagram/issues/42" target="_blank" rel="noopener" class="pp-link">
+                        ahmedkhaleel2004/gitdiagram#42
+                    </a>
+                    <span class="pp-Metric">👍 1 &nbsp;|&nbsp; 💬 0</span>
+                </div>
+                <h4>💡 Feature Request: Chrome Extension for GitDiagram</h4>
+                <p class="muted">It would be great to have a Chrome Extension for GitDiagram that allows users to quickly visualize Git branches directly from their browser. ### Sample ![Image](https://github.com/user-attachments/assets/8ef489de-dda6-40c4-a2f0-23aec6caf0bc)</p>
+            </div>
+            
+            <div class="card pp-card">
+                <div class="pp-header">
+                    <a href="https://github.com/cathrynlavery/diagram-design/issues/62" target="_blank" rel="noopener" class="pp-link">
+                        cathrynlavery/diagram-design#62
+                    </a>
+                    <span class="pp-Metric">👍 0 &nbsp;|&nbsp; 💬 12</span>
+                </div>
+                <h4>Proposal: new dataviz types — treemap, sankey, slopegraph + more</h4>
+                <p class="muted">Love this repo @cathrynlavery ! I&#x27;ve been using some charts and dataviz in my own projects recently so thought I would contribute some extra chart types. The current 27 types cover diagrams really well. On the chart side there&#x27;s bar, line, and radar — these would add proportion (...</p>
+            </div>
+            
+            <div class="card pp-card">
+                <div class="pp-header">
+                    <a href="https://github.com/cathrynlavery/diagram-design/issues/250" target="_blank" rel="noopener" class="pp-link">
+                        cathrynlavery/diagram-design#250
+                    </a>
+                    <span class="pp-Metric">👍 0 &nbsp;|&nbsp; 💬 3</span>
+                </div>
+                <h4>[Feature]: Port cross-connect — a semantic pattern on Database schema</h4>
+                <p class="muted">### What are you trying to show? Which strand or patch cord lands on which port of which distribution frame, and what each port can still be used for. Two or three frames (fibre ODFs, copper patch panels) are drawn port by port; the reader&#x27;s question is &quot;where does port 04 go, an...</p>
+            </div>
+            
+            <div class="card pp-card">
+                <div class="pp-header">
+                    <a href="https://github.com/cathrynlavery/diagram-design/issues/252" target="_blank" rel="noopener" class="pp-link">
+                        cathrynlavery/diagram-design#252
+                    </a>
+                    <span class="pp-Metric">👍 0 &nbsp;|&nbsp; 💬 3</span>
+                </div>
+                <h4>[Feature]: Route strip — sites along a linear asset on an honest metric axis (pattern on Timeline)</h4>
+                <p class="muted">### What are you trying to show? A chain of sites along one linear asset — a cable route, a duct run, a pipeline, a rail line — where the distance between neighbours is load-bearing: the reader must see that one span is 80 m and the next is 1.8 km, and where along a span a tap or...</p>
+            </div>
+            
+    </div>
+  </section>
+
+  <!-- TAB 3: SYSTEM DESIGN & MERMAID -->
+  <section id="tab-design" class="tab-panel">
+    <h2 class="section-title">System Topology Diagram</h2>
+    <div class="mermaid-box">
+      <pre class="mermaid">flowchart TD
+    Dev([&quot;Developer&quot;]) --&gt;|&quot;/preflight or idea pitch&quot;| Skill[&quot;PreFlight Agent Skill (SKILL.md)&quot;]
+    Skill --&gt;|&quot;Round 1..N Frontier Questions&quot;| Griller[&quot;Socratic Griller &amp; Readiness Gate (5x20% Rubric)&quot;]
+    Skill --&gt;|&quot;Inline Term Resolution&quot;| Glossary[&quot;GLOSSARY.md (Domain Model)&quot;]
+    Griller --&gt;|&quot;state.py&quot;| StateJSON[(&quot;.preflight/state.json &amp; decisions.json&quot;)]
+    Griller --&gt;|&quot;state.py add-decision&quot;| ADRs[&quot;docs/adr/NNNN-*.md&quot;]
+    Skill --&gt;|&quot;Async after Round 1 (scout.py)&quot;| Scout[&quot;GitHub Deep-Scout &amp; Pain-Point Miner&quot;]
+    Scout &lt;--&gt;|&quot;7-day TTL&quot;| CacheDB[(&quot;.preflight/cache.db SQLite3&quot;)]
+    Scout --&gt;|&quot;Active Incumbents, Graveyard, Pain Points&quot;| PriorArtJSON[(&quot;.preflight/prior-art.json&quot;)]
+    PriorArtJSON --&gt;|&quot;Live Ammunition for Round 2+&quot;| Griller
+    StateJSON &amp; PriorArtJSON --&gt;|&quot;Gate &gt;= 80% (render_blueprint.py)&quot;| Blueprint[&quot;blueprint_report.html (Interactive Mermaid + Red-Team)&quot;]
+    Blueprint --&gt;|&quot;Downstream Handoff&quot;| Downstream[&quot;/to-spec -&gt; /to-tickets -&gt; /implement + /tdd&quot;]</pre>
+    </div>
+
+    <h2 class="section-title">Core Request Lifecycle (Sequence Diagram)</h2>
+    <div class="mermaid-box">
+      <pre class="mermaid">sequenceDiagram
+    actor Dev as Developer
+    participant Agent as Host Agent (/preflight)
+    participant State as state.py (.preflight/ + docs/adr/)
+    participant Scout as scout.py (GitHub API + SQLite Cache)
+    participant Render as render_blueprint.py
+    Dev-&gt;&gt;Agent: Pitch project idea
+    Agent-&gt;&gt;State: init project &amp; seed GLOSSARY.md
+    Agent-&gt;&gt;Dev: Round 1 Frontier Questions (Problem, Scope, Memory)
+    Dev-&gt;&gt;Agent: Round 1 Answers
+    par Async GitHub Prior-Art Scout
+        Agent-&gt;&gt;Scout: Execute scoped repo &amp; open-issue queries
+        Scout--&gt;&gt;Agent: Active Incumbents, Graveyard Repos (&gt;365d), Mined Pain Points (+1 issues)
+    and Rubric &amp; ADR Recording
+        Agent-&gt;&gt;State: update-dimension &amp; add-decision (ADR-0001, ADR-0002)
+    end
+    Agent-&gt;&gt;Dev: Round 2+ Frontier Questions armed with Mined Pain Points
+    Dev-&gt;&gt;Agent: Lock remaining architectural trade-offs
+    Agent-&gt;&gt;State: Readiness Score reaches &gt;= 80% (Gate Unlocked)
+    Agent-&gt;&gt;Render: Render standalone blueprint_report.html
+    Render--&gt;&gt;Dev: Interactive HTML Blueprint + Handoff to /to-spec &amp; /to-tickets</pre>
+    </div>
+
+    <h2 class="section-title">Architecture Trade-Off Matrix</h2>
+    <div class="card" style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>Option</th>
+            <th>Pros</th>
+            <th>Cons</th>
+            <th>Verdict</th>
+          </tr>
+        </thead>
+        <tbody>
+          
+            <tr>
+                <td><strong>Native Agent Skill + Python Helpers (Selected)</strong></td>
+                <td>Zero extra LLM API keys; native access to host subagents; deterministic SQLite caching &amp; HTML rendering.</td>
+                <td>Requires host AI coding agent (Antigravity, Claude Code, Cursor).</td>
+                <td>WINNER (ADR-0001)</td>
+            </tr>
+            
+            <tr>
+                <td><strong>Standalone gemini-2.5-flash Rich CLI</strong></td>
+                <td>Runs in a bare terminal without an IDE agent.</td>
+                <td>Duplicates host LLM loop; requires separate API key; isolated from workspace agent skills.</td>
+                <td>Rejected</td>
+            </tr>
+            
+            <tr>
+                <td><strong>Post-Hoc Repo Visualizer (e.g. GitDiagram / DeepWiki)</strong></td>
+                <td>Instant diagram from existing code.</td>
+                <td>Useless before code is written; zero adversarial grilling or issue pain-point mining.</td>
+                <td>Complementary / Different Phase</td>
+            </tr>
+            
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- TAB 4: DECISION LEDGER & IMPLEMENTATION PLAN -->
+  <section id="tab-ledger" class="tab-panel">
+    <h2 class="section-title">Decision Ledger (Locked ADRs &amp; Rejected Paths)</h2>
+    
+                <div class="card adr-card">
+                    <div class="adr-header">
+                        <span class="badge badge-blue">ADR-0001</span>
+                        <h4>Host-Orchestrated Agent Skill Over Standalone LLM CLI</h4>
+                        <span class="muted">docs/adr/0001-host-orchestrated-agent-skill.md</span>
+                    </div>
+                    <p><strong>Locked Decision:</strong> Package PreFlight as a native Agent Skill (SKILL.md + deterministic Python helper scripts) orchestrated by the host agent.</p>
+                    <p><strong>Rationale:</strong> Avoids duplicate API keys and split context while keeping GitHub API caching and HTML rendering deterministic.</p>
+                    <p class='rejected'><strong>Rejected Alternatives:</strong> Standalone Python CLI loop calling gemini-2.5-flash directly.</p>
+                </div>
+                
+                <div class="card adr-card">
+                    <div class="adr-header">
+                        <span class="badge badge-blue">ADR-0002</span>
+                        <h4>Hybrid Repo-Native Markdown/JSON State and SQLite Repo Cache</h4>
+                        <span class="muted">docs/adr/0002-hybrid-repo-native-and-sqlite-state.md</span>
+                    </div>
+                    <p><strong>Locked Decision:</strong> Store Working State and Decision Ledger as git-diffable JSON/Markdown (.preflight/*.json, docs/adr/*.md) and use SQLite (.preflight/cache.db) strictly for Tier 3 GitHub API caching.</p>
+                    <p><strong>Rationale:</strong> Downstream coding agents and humans need direct access to docs/adr/ and GLOSSARY.md in version control.</p>
+                    <p class='rejected'><strong>Rejected Alternatives:</strong> Single opaque SQLite database for all three memory tiers.</p>
+                </div>
+                
+
+    <h2 class="section-title">Tracer-Bullet Implementation Plan &amp; Handoff</h2>
+    <div class="card">
+      <ol class='step-list'><li>1. Configure repo agent conventions (AGENTS.md, docs/agents/*, GLOSSARY.md, docs/adr/).</li><li>2. Implement Tier 1 &amp; Tier 2 state &amp; ADR ledger manager (skills/preflight/scripts/state.py).</li><li>3. Implement Tier 3 SQLite GitHub Deep-Scout &amp; Pain-Point Miner (skills/preflight/scripts/scout.py).</li><li>4. Implement Readiness-Gated dark-mode HTML + Mermaid.js Blueprint renderer (skills/preflight/scripts/render_blueprint.py).</li><li>5. Package SKILL.md, verify with automated unit tests (tests/test_preflight.py), and install globally to ~/.gemini/config/skills/preflight.</li></ol>
+    </div>
+  </section>
+</div>
+
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });
+  function showTab(tabId, btn) {
+    document.querySelectorAll('.tab-panel').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+    document.getElementById(tabId).classList.add('active');
+    btn.classList.add('active');
+  }
+</script>
+</body>
+</html>
