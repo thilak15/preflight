@@ -21,5 +21,19 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Compile-check all scripts and tests
+        run: python3 -m py_compile skills/preflight/scripts/*.py tests/*.py
+
       - name: Run unit & integration tests
         run: python3 -m unittest discover -s tests -v
+
+      - name: Run CLI smoke test
+        run: |
+          TMP_WS=$(mktemp -d)
+          python3 skills/preflight/scripts/state.py --workspace "$TMP_WS" init --name "SmokeApp" --summary "CI smoke test"
+          python3 skills/preflight/scripts/render_blueprint.py --workspace "$TMP_WS" --force
+          test -f "$TMP_WS/blueprint_report.html"
+          test -f "$TMP_WS/.preflight/SPEC.md"
+          test -f "$TMP_WS/.preflight/STACK.md"
+          test -f "$TMP_WS/.preflight/issues/INDEX.md"
+          rm -rf "$TMP_WS"

@@ -4,8 +4,9 @@ __pycache__/
 *$py.class
 .pytest_cache/
 
-# Local PreFlight runtime state & outputs in working directories
-.preflight/
+# Local PreFlight runtime state & outputs in root working directory
+/.preflight/
+examples/*/.preflight/cache.db
 /blueprint_report.html
 .scratch/
 

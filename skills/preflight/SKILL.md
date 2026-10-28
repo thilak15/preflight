@@ -8,12 +8,12 @@ description: >-
   scout GitHub for Graveyard/Dormant Repos, OSS Building Blocks, and verified Pain Points from open issues,
   recommend project maintenance tooling (Docker, Kubernetes, lockfiles, CI) with alternatives,
   design agent communication and memory workflows (Stateless vs. SQLite/Postgres vs. FTS vs. RAG vs. Vector DB),
-  or generate `blueprint_report.html`, `.preflight/SPEC.md`, and `.preflight/STACK.md`.
+  or generate `blueprint_report.html`, `.preflight/SPEC.md`, `.preflight/STACK.md`, and `.preflight/issues/`.
 ---
 
 # PreFlight: Pre-Implementation Architecture, Tooling & Prior-Art Validator
 
-PreFlight runs **before** code is written. Instead of acting as a "yes-man", you interrogate the user across five architectural dimensions, scout GitHub for **Active Incumbents**, **Graveyard / Dormant Repos**, **OSS Building Blocks**, and **Pain-Point Mining** from open issues and top-voted comments, recommend **Project Maintenance & Infrastructure Tooling** (with alternatives), prescribe the right **Memory & Agent Communication Workflow** (Stateless vs. Transactional DB vs. Lexical FTS vs. RAG / Vector DB), record locked choices in a **Decision Ledger**, and compile `blueprint_report.html`, `.preflight/SPEC.md`, and `.preflight/STACK.md`.
+PreFlight runs **before** code is written. Instead of acting as a "yes-man", you interrogate the user across five architectural dimensions, scout GitHub for **Active Incumbents**, **Graveyard / Dormant Repos**, **OSS Building Blocks**, and **Pain-Point Mining** from open issues and top-voted comments, recommend **Project Maintenance & Infrastructure Tooling** (with alternatives and verified vs. claimed config proofs), prescribe the right **Memory & Agent Communication Workflow** (supporting primary + secondary strategies across Stateless, Transactional DB, Lexical FTS, RAG / Vector DB, Hybrid Search, and Episodic Agent State), record locked choices in a **Decision Ledger**, and compile `blueprint_report.html`, `.preflight/SPEC.md`, `.preflight/STACK.md`, and ordered implementation tickets in `.preflight/issues/`.
 
 ## Interview & Domain Discipline (Self-Contained)
 
@@ -37,36 +37,47 @@ done
 
 ---
 
-## Fresh Reset / Running a New Idea or Re-Running Cleanly (`reset` / `--reset`)
+## Fresh Reset / Running a New Idea or Re-Running Cleanly (`reset` / `init --reset`)
 
 Whenever the user wants to **run a different idea in the same folder** or **re-run the same idea from a fresh slate**:
 - Run `state.py reset` (or pass `--reset` to `state.py init`):
   ```bash
   python3 "$PREFLIGHT_SCRIPTS/state.py" --workspace . reset
   ```
-- This deletes all pre-performed dimension scores, `.preflight/state.json`, `.preflight/decisions.json`, `.preflight/prior-art.json`, `.preflight/SPEC.md`, `.preflight/STACK.md`, `blueprint_report.html`, and generated `docs/adr/NNNN-*.md` files while keeping `.preflight/cache.db` so GitHub API rate limits aren't wasted (pass `--purge-cache` to also wipe `cache.db`).
+- **Safe ADR Handling (`--keep-adrs`)**:
+  - By default, `reset` and `init --reset` delete **only** the ADR files recorded in `.preflight/decisions.json`, leaving any pre-existing repository ADRs in `docs/adr/` untouched.
+  - Pass `--keep-adrs` to `state.py reset` or `state.py init --reset` if you also want to keep the ADRs recorded during the previous PreFlight session on disk.
+  - Pass `--purge-cache` if you also want to delete `.preflight/cache.db` (kept by default to preserve GitHub Search API rate limits).
 
 ---
 
 ## The 5 Grilling Dimensions & Evidence-Based Readiness Gate
 
-Every project is scored across five dimensions (`20%` each, `0%–100%` total). `state.py` enforces **strict programmatic evidence rules** — self-certifying `20/20` with a one-liner or scoring `differentiation` before running `scout.py` will fail with exit code `2`:
+Every project is scored across five dimensions (`20%` each, `0%–100%` total). `state.py` enforces **strict programmatic evidence rules** — self-certifying `20/20` with a one-liner, scoring `memory` `20/20` before configuring `set-memory-arch`, or scoring `differentiation` before running `scout.py` will fail with exit code `2`:
 
 | Key | Dimension | `0` (Untouched) | `10` (Surface) | `20` (Stress-Tested — Programmatically Enforced) |
 | :--- | :--- | :--- | :--- | :--- |
 | `problem` | **Problem & User Pain** | Unstated | General pitch stated | Summary $\ge 40$ chars + $\ge 2$ `--edge-case` scenarios locked |
 | `scope` | **Scope & Non-Goals** | Unbounded | High-level features listed | Summary $\ge 40$ chars + $\ge 2$ explicit boundary `--edge-case` items |
-| `memory` | **State, Memory & Agent Communication** | Unknown | Storage engine named | Summary $\ge 40$ chars + $\ge 2$ state/cache/context `--edge-case` items |
+| `memory` | **State, Memory & Agent Communication** | Unknown | Storage engine named | Requires `set-memory-arch` (primary strategy, communication pattern, $\ge 1$ failure mode) + summary $\ge 40$ chars + $\ge 2$ `--edge-case` items |
 | `bottlenecks` | **Bottlenecks & Failure Modes** | Ignored | Happy-path assumed | Summary $\ge 40$ chars + $\ge 2$ rate-limit/latency/SPOF `--edge-case` items |
 | `differentiation` | **Prior-Art Differentiation** | Unchecked | Contrasted against scouted repos | Requires `.preflight/prior-art.json` from `scout.py`, $\ge 2$ edge cases, and must explicitly cite at least one discovered `owner/repo` |
 
 **Readiness Gate Requirements (`evaluate_gate`)**:
-`render_blueprint.py` refuses to render a passed Blueprint until **all** of the following hold:
+`render_blueprint.py` and `state.py export-tickets` refuse to unlock until **all** of the following hold:
 1. Total score $\ge 80\%$ with **zero** dimensions at `0%`.
 2. `.preflight/prior-art.json` exists and contains scouted repositories from `scout.py`.
-3. At least **1 Architecture Decision Record** (`add-decision`) is recorded in `.preflight/decisions.json` and `docs/adr/`.
-4. At least **1 Adversarial Red-Team Critique** (`add-critique`) is recorded.
-5. Both `topology_mermaid` and `sequence_mermaid` are populated via `state.py set-design`.
+3. `set-memory-arch` is configured with a primary strategy, agent/component communication pattern, and $\ge 1$ memory failure mode.
+4. At least **1 Stack Explained tool entry** (`add-tool`) is recorded.
+5. At least **1 Architecture Decision Record** (`add-decision`) is recorded in `.preflight/decisions.json` and `docs/adr/`.
+6. At least **1 Adversarial Red-Team Critique** (`add-critique`) is recorded.
+7. Both `topology_mermaid` and `sequence_mermaid` are populated via `state.py set-design`.
+
+**Draft Override (`--force`)**:
+If the user explicitly asks to preview outputs before the gate reaches 80%, passing `--force` to `render_blueprint.py` or `state.py export-tickets` bypasses the gate lock **but watermarks every output as `DRAFT`**:
+- `blueprint_report.html` displays a red `DRAFT BLUEPRINT (READINESS GATE LOCKED)` banner and `DRAFT` title.
+- `.preflight/SPEC.md` and `.preflight/STACK.md` headers are prefixed with `[DRAFT]` and a gate-locked warning callout.
+- Every exported ticket in `.preflight/issues/` is prefixed with `[DRAFT]` and marked `**Status:** draft` (never `ready-for-agent`).
 
 ---
 
@@ -76,7 +87,7 @@ Every project is scored across five dimensions (`20%` each, `0%–100%` total). 
 
 When the user pitches an idea or invokes `/preflight`:
 
-1. Initialize `.preflight/state.json` (pass `--reset` if starting a new idea or re-running from scratch):
+1. Initialize `.preflight/state.json` (pass `--reset` if starting a new idea or re-running from scratch; add `--keep-adrs` to preserve previous session ADRs):
    ```bash
    python3 "$PREFLIGHT_SCRIPTS/state.py" --workspace . init --reset \
      --name "<Project Name>" \
@@ -95,35 +106,38 @@ When the user pitches an idea or invokes `/preflight`:
 
 As soon as the core problem is clear (after Round 1, or immediately if the user provided a detailed spec):
 
-1. Craft 3–4 competitor queries (`-q`) **and** 2–3 open-source library/tooling queries (`-t` / `--tool-query`) for the libraries/SDKs needed to build the project.
+1. Craft 2–3 competitor queries (`-q`) + 1–2 GitHub topic qualifiers (`--topic`), **and** 2–3 open-source library/tooling queries (`-t` / `--tool-query` or `--tool-topic`) for the libraries/SDKs needed to build the project.
 2. Run `scout.py`:
    ```bash
    python3 "$PREFLIGHT_SCRIPTS/scout.py" --workspace . \
      -q "<competitor query 1>" \
      -q "<competitor query 2>" \
+     --topic "<github-topic>" \
      -t "<oss building block query 1>" \
      -t "<oss building block query 2>"
    ```
-   `scout.py` authenticates via `gh auth token` $\to$ `GITHUB_TOKEN` $\to$ unauthenticated fallback, caches responses in `.preflight/cache.db` (SQLite3, 7-day TTL), writes `.preflight/prior-art.json`, and outputs:
-   - **Active Incumbents** (pushed within 365 days, with monthly star velocity)
-   - **Graveyard / Dormant Repos** (archived or $>365\text{d}$ without pushes)
-   - **Scouted OSS Building Blocks** (actively maintained open-source libraries/tools with license & star velocity)
+   `scout.py` authenticates via `gh auth token` $\to$ `GITHUB_TOKEN` $\to$ unauthenticated fallback, caches responses in `.preflight/cache.db` (SQLite3, 7-day TTL), writes `.preflight/prior-art.json` (including `search_limits` metadata), and outputs:
+   - **Active Incumbents** (pushed within 365 days, with verified root config files and approximate lifetime star velocity)
+   - **Graveyard / Dormant Repos** (heuristic: archived by maintainer or $>365\text{d}$ without pushes — treat $>365\text{d}$ inactivity as a maintenance signal only; never claim a repo stalled due to a single design choice without issue/commit evidence)
+   - **Scouted OSS Building Blocks** (actively maintained open-source libraries/tools with SPDX license & star counts)
    - **Verified Pain Points** (Pass A: top `+1` open issues; Pass B: `label:bug` open issues; includes `top_comments` from issue threads)
 
-**Completion Criterion**: `.preflight/prior-art.json` is populated with both competitors and OSS building blocks.
+**Completion Criterion**: `.preflight/prior-art.json` is populated with competitors, config-file evidence, and OSS building blocks.
 
 ---
 
-### Step 3: "Stack Explained" (Config-Verified Tooling, Now vs. Later) & Memory Architecture
+### Step 3: "Stack Explained" (Verified vs. Claimed Tooling, Now vs. Later) & Memory Architecture
 
-For every idea, you must produce a **"Stack Explained"** breakdown grounded in the config files `scout.py` discovered across incumbent repos (`pyproject.toml` for Poetry/uv, `Dockerfile` for Docker, `.github/workflows` for GitHub Actions, `.pre-commit-config.yaml` for pre-commit, etc.) **and** prescribe the Memory & Agent Communication workflow:
+For every idea, you must produce a **"Stack Explained"** breakdown **and** prescribe the Memory & Agent Communication workflow:
 
 #### A. "Stack Explained" (`state.py add-tool`)
 Produce one concise entry per tool answering four exact questions:
 1. **What job it does** (`--purpose`)
 2. **Why this project needs it now** (`--why`)
 3. **What the alternative was** (`--alternatives`)
-4. **Whether it is `now` or `later`** (`--stage now|later`) + the config file that proves it (`--config-proof`)
+4. **Whether it is `now` or `later`** (`--stage now|later`) + the config file (`--config-proof`)
+
+`state.py add-tool` automatically checks `--config-proof` against `.preflight/prior-art.json` (`observed_stack_configs`) and existing workspace files, labeling each entry in `STACK.md` and `blueprint_report.html` as either **`✅ Verified`** (backed by `scout.py` or workspace files) or **`⚠️ Claimed / Unverified`** (recommended for the target architecture, not yet present on disk).
 
 ```bash
 python3 "$PREFLIGHT_SCRIPTS/state.py" --workspace . add-tool \
@@ -135,14 +149,9 @@ python3 "$PREFLIGHT_SCRIPTS/state.py" --workspace . add-tool \
   --alternatives "<What the alternative was and why it wasn't chosen>" \
   --config-proof "<Config file proving usage, e.g. pyproject.toml ([tool.uv]), Dockerfile, .github/workflows, .pre-commit-config.yaml>"
 ```
-Always include entries for:
-- **Dependency Locking** (`pyproject.toml` / `uv.lock` / `poetry.lock` / `Cargo.lock`) — usually `now`.
-- **Code Quality & CI** (`.pre-commit-config.yaml`, `.github/workflows`) — usually `now`.
-- **Containerization** (`Dockerfile` / `docker-compose.yml`) — `now` or `later` depending on runtime.
-- **Orchestration at Scale** (`Kubernetes` / `Chart.yaml` / `k8s/`) — explicitly mark `later` when a single binary or Docker Compose suffices for V1!
 
 #### B. Memory, State & Agent Communication Advisor (`state.py set-memory-arch`)
-Evaluate how agents or components should communicate and what memory architecture fits best—do **not** default to a Vector DB or RAG unless unstructured semantic retrieval actually requires it:
+Evaluate how agents or components should communicate and what memory architecture fits best. Because real architectures often combine multiple layers (for example, `transactional-db` + `lexical-fts` + `episodic-agent-state`), `set-memory-arch` accepts a primary `--strategy` plus repeatable `--secondary-strategy` flags:
 - `stateless`: Pure CLI/utility or deterministic transform (avoid unnecessary DB overhead).
 - `transactional-db`: Structured relational/embedded state (`SQLite WAL` / `PostgreSQL`) with typed schemas.
 - `lexical-fts`: Exact-match/identifier/code/log search (`SQLite FTS5`, `BM25`, `Postgres tsvector`).
@@ -150,15 +159,16 @@ Evaluate how agents or components should communicate and what memory architectur
 - `hybrid-search`: Combined lexical (`BM25`/`FTS5`) + vector embeddings with Reciprocal Rank Fusion.
 - `episodic-agent-state`: Multi-step agent workflow using structured handoff checkpoints + compacted episodic state to prevent context rot.
 
-Record the memory architecture and its specific failure modes:
+Record the memory architecture and at least 1 specific memory failure mode (required before scoring `memory` `20/20`):
 ```bash
 python3 "$PREFLIGHT_SCRIPTS/state.py" --workspace . set-memory-arch \
   --strategy <stateless|transactional-db|lexical-fts|rag-vector-db|hybrid-search|episodic-agent-state> \
-  --communication "<How agents/components communicate and pass state (e.g., typed JSON handoff schemas, MCP, event queue)>" \
+  --secondary-strategy <optional additional strategy, repeatable> \
+  --communication "<How agents/components communicate and pass state (e.g., typed JSON handoff schemas, MCP, single-writer channel)>" \
   --workflow "<How memory is read, written, compacted, and invalidated across the workflow>" \
   --rationale "<Why this memory strategy beats RAG/Vector DB or other alternatives for this idea>" \
   --alternatives "<Rejected memory options (e.g. pure Vector DB, uncompacted chat history) and why>" \
-  --failure-mode "<Memory Failure Mode 1 (e.g. context window bloat, chunk boundary loss, stale cache) + mitigation>" \
+  --failure-mode "<Memory Failure Mode 1 (e.g. context window bloat, SQLITE_BUSY, stale cache) + mitigation>" \
   --failure-mode "<Memory Failure Mode 2 + mitigation>"
 ```
 This automatically generates `.preflight/STACK.md` and populates Tab 3 of `blueprint_report.html`.
@@ -209,7 +219,7 @@ In Round 2 and subsequent rounds:
 
 Once the **Readiness Gate** is unlocked:
 
-1. Populate the Mermaid diagrams, trade-off matrix, and ordered vertical-slice implementation steps via `state.py set-design`:
+1. Populate the Mermaid diagrams, trade-off matrix, and ordered vertical-slice implementation steps via `state.py set-design` (you can optionally use `"Title :: Detailed Deliverable :: BlockedBy"` in `--step` to declare custom or parallel dependency edges):
    ```bash
    python3 "$PREFLIGHT_SCRIPTS/state.py" --workspace . set-design \
      --topology "flowchart TD ..." \
@@ -219,19 +229,19 @@ Once the **Readiness Gate** is unlocked:
      --step "Step 1: ..." \
      --step "Step 2: ..."
    ```
-2. Render the Blueprint, Specification, Stack Document, and **individual dependency-ordered issue files** (`.preflight/issues/01-<slug>.md`, `02-<slug>.md`, ..., plus `.preflight/issues/INDEX.md`):
+2. Render the Blueprint, Specification, Stack Document, and **ordered implementation tickets** (`.preflight/issues/01-<slug>.md`, `02-<slug>.md`, ..., plus `.preflight/issues/INDEX.md`):
    ```bash
    python3 "$PREFLIGHT_SCRIPTS/render_blueprint.py" --workspace . \
      --output blueprint_report.html \
      --spec-output .preflight/SPEC.md
    ```
-   *(You can also run `python3 "$PREFLIGHT_SCRIPTS/state.py" --workspace . export-tickets` standalone at any time to regenerate `.preflight/issues/NN-<slug>.md`.)*
+   *(Note: Visual diagram rendering in `blueprint_report.html` loads Mermaid.js from `cdn.jsdelivr.net` and requires an internet connection; expandable raw Mermaid source blocks are included on every diagram card.)*
 3. Present links to:
    - `blueprint_report.html`
    - `.preflight/SPEC.md` and `.preflight/STACK.md`
-   - `.preflight/issues/INDEX.md` (and the individual `01-...md`, `02-...md` tickets)
+   - `.preflight/issues/INDEX.md` (and the individual `01-...md`, `02-...md` tickets with ticket-specific acceptance criteria)
    - `GLOSSARY.md` and `docs/adr/`
-4. **Code One-by-One in Exact Dependency Order (Handoff to Implementation)**:
-   Offer the user two ways to code the generated tickets in order:
-   - **Option A — One Ticket at a Time**: Work through `.preflight/issues/01-<slug>.md`, `02-<slug>.md`, ... sequentially (one vertical slice per context window), writing tests first and verifying each ticket's acceptance criteria before moving to the next.
-   - **Option B — Parallel Task-Graph Build**: Use background implementer subagents to execute unblocked tickets in `.preflight/issues/INDEX.md` in dependency order and merge them onto an integration branch.
+4. **Code One-by-One in Order (Handoff to Implementation)**:
+   Offer the user two ways to code the generated tickets:
+   - **Option A — One Ticket at a Time**: Work through `.preflight/issues/01-<slug>.md`, `02-<slug>.md`, ... sequentially (one vertical slice per context window), writing tests first and verifying each ticket's specific acceptance criteria before moving to the next.
+   - **Option B — Parallel Task Build**: When tickets declare independent `BlockedBy` edges in `.preflight/issues/INDEX.md`, use background implementer subagents to execute unblocked tickets in parallel and merge them onto an integration branch.

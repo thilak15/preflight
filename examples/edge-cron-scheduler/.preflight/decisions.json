@@ -1,0 +1,24 @@
+[
+  {
+    "id": "ADR-0001",
+    "number": 1,
+    "title": "Autonomous Per-Node SQLite WAL Over Embedded Raft/etcd",
+    "decision": "Each edge node runs an autonomous scheduler backed by local SQLite3 in WAL mode with a single-writer batching goroutine and an asynchronous mTLS `sync_outbox` queue.",
+    "rejected": "Embedded Raft/Serf cluster across edge nodes (as in `dkron-io/dkron` and `wj596/gojob`) or shared NFS worker directories (`dagucloud/dagu#1260`).",
+    "rationale": "`dkron-io/dkron#1001` proves that multi-node restarts or IP changes break Raft leader election until raft data is manually deleted. Edge gateways require 100% local scheduling availability during WAN blackouts.",
+    "dimension": "memory",
+    "file": "docs/adr/0001-autonomous-per-node-sqlite-wal-over-embedded-raft-etcd.md",
+    "created_at": "2026-10-28T09:26:26+00:00"
+  },
+  {
+    "id": "ADR-0002",
+    "number": 2,
+    "title": "Linux cgroups v2 Per-Step Isolation and Node Concurrency Caps",
+    "decision": "Place every DAG step in a dedicated `/sys/fs/cgroup/edgecron/<run_id>/<step_id>` scope enforcing `memory.max`, `cpu.max`, and `cgroup.kill` on timeout, gated by a node-level `max_parallel_jobs` semaphore (`dkron-io/dkron#966`).",
+    "rejected": "Standard Go `os/exec` `cmd.Process.Kill()` without cgroup containment or unbounded parallel job spawning.",
+    "rationale": "Prevents double-forked grandchild processes from leaking after step timeouts and prevents 80-node job shifts (`dkron-io/dkron#966`) from OOM-killing a 1GB edge gateway.",
+    "dimension": "bottlenecks",
+    "file": "docs/adr/0002-linux-cgroups-v2-per-step-isolation-and-node-concurrency.md",
+    "created_at": "2026-10-28T09:26:26+00:00"
+  }
+]

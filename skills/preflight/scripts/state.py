@@ -76,9 +76,18 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def slugify(text: str) -> str:
+def slugify(text: str, max_len: int = 60) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
-    return slug[:60] or "decision"
+    if not slug:
+        return "decision"
+    if len(slug) <= max_len:
+        return slug
+    truncated = slug[:max_len]
+    if "-" in truncated:
+        word_cut = truncated.rsplit("-", 1)[0].strip("-")
+        if word_cut:
+            return word_cut
+    return truncated.strip("-") or "decision"
 
 
 def get_preflight_dir(workspace: Path) -> Path:
@@ -109,6 +118,7 @@ def default_state(name: str = "", summary: str = "") -> dict[str, Any]:
         "tooling_recommendations": [],
         "memory_architecture": {
             "strategy": "",
+            "secondary_strategies": [],
             "agent_communication_pattern": "",
             "workflow_memory_flow": "",
             "rationale": "",
@@ -136,12 +146,28 @@ def reset_workspace_state(
     """
     Delete all pre-performed scores, states, decisions, prior-art snapshots, and generated specs
     so the user can run a new idea or re-run the same idea cleanly from zero.
+    Only deletes ADR markdown files explicitly listed in `.preflight/decisions.json` when `clear_adrs=True`,
+    preserving any pre-existing repository ADRs in `docs/adr/`.
     """
     removed: list[str] = []
     preflight_dir = workspace / ".preflight"
+
+    # Read recorded ADR paths from decisions.json BEFORE unlinking decisions.json
+    recorded_adr_files: list[str] = []
+    decisions_path = preflight_dir / "decisions.json"
+    if clear_adrs and decisions_path.exists():
+        try:
+            decisions_data = json.loads(decisions_path.read_text(encoding="utf-8"))
+            if isinstance(decisions_data, list):
+                for entry in decisions_data:
+                    if isinstance(entry, dict) and entry.get("file"):
+                        recorded_adr_files.append(str(entry["file"]))
+        except Exception:
+            pass
+
     targets = [
         preflight_dir / "state.json",
-        preflight_dir / "decisions.json",
+        decisions_path,
         preflight_dir / "prior-art.json",
         preflight_dir / "SPEC.md",
         preflight_dir / "STACK.md",
@@ -155,12 +181,12 @@ def reset_workspace_state(
             t.unlink()
             removed.append(str(t.relative_to(workspace)))
 
-    if clear_adrs:
-        adr_dir = workspace / "docs" / "adr"
-        if adr_dir.exists():
-            for adr_file in sorted(adr_dir.glob("[0-9][0-9][0-9][0-9]-*.md")):
+    if clear_adrs and recorded_adr_files:
+        for rel_file in recorded_adr_files:
+            adr_file = (workspace / rel_file).resolve()
+            if adr_file.exists() and adr_file.is_relative_to(workspace.resolve()):
                 adr_file.unlink()
-                removed.append(str(adr_file.relative_to(workspace)))
+                removed.append(str(adr_file.relative_to(workspace.resolve())))
 
     issues_dir = preflight_dir / "issues"
     if issues_dir.exists():
@@ -197,6 +223,54 @@ def save_decisions(workspace: Path, decisions: list[dict[str, Any]]) -> Path:
     return path
 
 
+def verify_config_proof(workspace: Path, config_proof: str, recommended: str = "") -> tuple[str, str]:
+    """
+    Check whether a tool's `config_proof` is backed by empirical evidence in either:
+    1. `.preflight/prior-art.json` (`observed_stack_configs` or `detected_configs`), or
+    2. An existing file/directory in `workspace`.
+    Returns `(proof_status, proof_source)` where `proof_status` is `"verified"` or `"claimed-unverified"`.
+    """
+    raw = config_proof.strip()
+    if not raw or raw == "—":
+        return "claimed-unverified", "none"
+
+    # Extract candidate file/path tokens (e.g., "pyproject.toml ([tool.uv]) + uv.lock" -> ["pyproject.toml", "uv.lock"])
+    candidates: list[str] = []
+    for part in re.split(r"[\s+,;|]+", raw):
+        cleaned = part.strip("()[]`'\"")
+        if not cleaned or cleaned.startswith("["):
+            continue
+        if "." in cleaned or "/" in cleaned or cleaned in ("Dockerfile", "Containerfile", "Makefile", "justfile", "k8s", "helm"):
+            candidates.append(cleaned.rstrip("/"))
+
+    # 1. Check workspace files
+    for cand in candidates:
+        cand_path = (workspace / cand).resolve()
+        if cand_path.exists() and cand_path.is_relative_to(workspace.resolve()):
+            return "verified", f"workspace:{cand}"
+
+    # 2. Check .preflight/prior-art.json observed_stack_configs & incumbent detected_configs
+    prior_art = load_prior_art(workspace)
+    if prior_art:
+        observed = list(prior_art.get("observed_stack_configs") or [])
+        for inc in prior_art.get("active_incumbents") or []:
+            observed.extend(inc.get("detected_configs") or [])
+        raw_lower = raw.lower()
+        rec_lower = recommended.lower()
+        for oc in observed:
+            oc_cfg = str(oc.get("config_file") or "").lower()
+            oc_tool = str(oc.get("tool") or "").lower()
+            if oc_cfg and (oc_cfg in raw_lower or raw_lower in oc_cfg):
+                return "verified", f"scout:{oc.get('config_file')}"
+            for cand in candidates:
+                if cand.lower() and cand.lower() in oc_cfg:
+                    return "verified", f"scout:{oc.get('config_file')}"
+            if oc_tool and rec_lower and (oc_tool in rec_lower or rec_lower in oc_tool):
+                return "verified", f"scout:{oc.get('config_file')}"
+
+    return "claimed-unverified", "unverified-claim"
+
+
 def evaluate_gate(state: dict[str, Any], workspace: Path | None = None) -> tuple[int, bool, list[str]]:
     dims = state.get("dimensions", {})
     scores = [int(dims.get(d, {}).get("score", 0)) for d in DIMENSIONS]
@@ -209,6 +283,17 @@ def evaluate_gate(state: dict[str, Any], workspace: Path | None = None) -> tuple
     zero_dims = [d for d in DIMENSIONS if int(dims.get(d, {}).get("score", 0)) == 0]
     if zero_dims:
         missing.append(f"Untouched (0%) dimensions: {', '.join(zero_dims)}")
+
+    mem = state.get("memory_architecture") or {}
+    if not (mem.get("strategy") or "").strip():
+        missing.append("Memory strategy (`set-memory-arch --strategy ...`) is required")
+    if not (mem.get("agent_communication_pattern") or "").strip():
+        missing.append("Agent/component communication pattern (`set-memory-arch --communication ...`) is required")
+    if not (mem.get("failure_modes") or []):
+        missing.append("At least 1 Memory Failure Mode (`set-memory-arch --failure-mode ...`) is required")
+
+    if not (state.get("tooling_recommendations") or []):
+        missing.append("At least 1 Stack Explained tool entry (`add-tool`) is required")
 
     if not (state.get("red_team_critiques") or []):
         missing.append("At least 1 Red-Team Critique (`add-critique`) is required")
@@ -246,10 +331,11 @@ def load_state(workspace: Path) -> dict[str, Any]:
         return state
     data = json.loads(path.read_text(encoding="utf-8"))
     data.setdefault("tooling_recommendations", [])
-    data.setdefault(
+    mem = data.setdefault(
         "memory_architecture",
         {
             "strategy": "",
+            "secondary_strategies": [],
             "agent_communication_pattern": "",
             "workflow_memory_flow": "",
             "rationale": "",
@@ -257,6 +343,7 @@ def load_state(workspace: Path) -> dict[str, Any]:
             "failure_modes": [],
         },
     )
+    mem.setdefault("secondary_strategies", [])
     evaluate_gate(data, workspace)
     return data
 
@@ -266,45 +353,85 @@ def strip_step_prefix(raw_step: str) -> str:
     return re.sub(r"^\s*(?:step\s+\d+\s*[:.\-]\s*|\d+\s*[.)]\s+)", "", raw_step, flags=re.IGNORECASE).strip()
 
 
+def format_memory_strategy_display(mem: dict[str, Any]) -> str:
+    primary = (mem.get("strategy") or "").strip()
+    if not primary:
+        return "Unspecified"
+    secondaries = [s.strip() for s in (mem.get("secondary_strategies") or []) if s.strip() and s.strip() != primary]
+    if secondaries:
+        return f"{primary} (primary) + {', '.join(secondaries)} (secondary)"
+    return primary
+
+
 def format_stack_explained_table(tools: list[dict[str, Any]]) -> list[str]:
-    """Return Markdown table lines for the 'Stack Explained' tooling list."""
+    """Return Markdown table lines for the 'Stack Explained' tooling list, separating Verified vs Claimed proof."""
     lines = [
-        "| Tool | Stage (`Now` / `Later`) | What Job It Does | Why Needed | Alternative Considered | Config Proof in Prior-Art |",
+        "| Tool | Stage (`Now` / `Later`) | What Job It Does | Why Needed | Alternative Considered | Config Proof & Verification |",
         "| :--- | :---: | :--- | :--- | :--- | :--- |",
     ]
     for t in tools:
         stage = (t.get("stage") or "now").upper()
         proof = t.get("config_proof") or "—"
+        status = t.get("proof_status") or "claimed-unverified"
+        source = t.get("proof_source") or ""
+        if status == "verified":
+            badge = f"✅ Verified (`{source}`): `{proof}`" if source else f"✅ Verified: `{proof}`"
+        else:
+            badge = f"⚠️ Claimed / Unverified: `{proof}`"
         lines.append(
             f"| **{t.get('recommended', '—')}** (`{t.get('category', 'core-oss')}`) | **{stage}** | "
-            f"{t.get('purpose', '—')} | {t.get('why', '—')} | {t.get('alternatives', '—')} | `{proof}` |"
+            f"{t.get('purpose', '—')} | {t.get('why', '—')} | {t.get('alternatives', '—')} | {badge} |"
         )
     return lines
 
 
-def build_stack_markdown(state: dict[str, Any]) -> str:
+def build_stack_markdown(state: dict[str, Any], is_draft: bool | None = None) -> str:
     project_name = state.get("project_name") or "Untitled Project"
     tools = state.get("tooling_recommendations") or []
     mem = state.get("memory_architecture") or {}
+    draft = (not bool(state.get("readiness_unlocked", False))) if is_draft is None else is_draft
+    title_prefix = "[DRAFT] " if draft else ""
 
     lines = [
-        f"# Stack Explained & Memory Architecture: {project_name}",
-        "",
-        "## 1. Stack Explained (Config-Verified Tooling, Alternatives & Now vs. Later)",
+        f"# {title_prefix}Stack Explained & Memory Architecture: {project_name}",
         "",
     ]
+    if draft:
+        lines.extend(
+            [
+                "> ⚠️ **DRAFT — READINESS GATE LOCKED:** This stack document was exported before all PreFlight readiness requirements passed.",
+                "",
+            ]
+        )
+
+    lines.extend(
+        [
+            "## 1. Stack Explained (Tooling, Alternatives, Now vs. Later & Proof Status)",
+            "",
+        ]
+    )
     if not tools:
         lines.append("_No tooling recommendations recorded yet._")
         lines.append("")
     else:
+        verified_tools = [t for t in tools if t.get("proof_status") == "verified"]
+        claimed_tools = [t for t in tools if t.get("proof_status") != "verified"]
         lines.extend(format_stack_explained_table(tools))
         lines.append("")
+        lines.append(
+            f"- **Verification Summary:** {len(verified_tools)} Verified (backed by `scout.py` or workspace files) "
+            f"| {len(claimed_tools)} Claimed / Unverified (recommended for target architecture, not yet present on disk)."
+        )
+        lines.append("")
 
+    secondaries = [s for s in (mem.get("secondary_strategies") or []) if s]
     lines.extend(
         [
             "## 2. Memory, State & Agent Communication Architecture",
             "",
-            f"- **Selected Memory Strategy:** `{mem.get('strategy') or 'Unspecified'}`",
+            f"- **Primary Memory Strategy:** `{mem.get('strategy') or 'Unspecified'}`",
+            f"- **Secondary / Combined Strategies:** {', '.join(f'`{s}`' for s in secondaries) if secondaries else 'None (single-strategy)'}",
+            f"- **Combined Memory Profile:** `{format_memory_strategy_display(mem)}`",
             f"- **Agent / Component Communication Pattern:** {mem.get('agent_communication_pattern') or '—'}",
             f"- **Workflow Memory Flow:** {mem.get('workflow_memory_flow') or '—'}",
             f"- **Why This Strategy (vs. RAG / Vector DB / Alternatives):** {mem.get('rationale') or '—'}",
@@ -371,6 +498,7 @@ def validate_dimension_evidence(
     score: int,
     summary: str,
     edge_cases: list[str],
+    state: dict[str, Any] | None = None,
 ) -> str | None:
     """Return an error string if the requested score violates evidence rules, or None if valid."""
     clean_summary = summary.strip()
@@ -387,6 +515,25 @@ def validate_dimension_evidence(
             return (
                 f"Rejected: score 20/20 on '{dimension}' requires at least {MIN_EDGE_CASES_FOR_20} "
                 f"stress-tested edge cases (`--edge-case`); got {len(edge_cases)}."
+            )
+
+    if dimension == "memory" and score == 20:
+        cur_state = state if state is not None else load_state(workspace)
+        mem = cur_state.get("memory_architecture") or {}
+        if not (mem.get("strategy") or "").strip():
+            return (
+                "Rejected: score 20/20 on 'memory' requires `set-memory-arch` to be configured first "
+                "(strategy, communication pattern, and >= 1 failure mode)."
+            )
+        if not (mem.get("agent_communication_pattern") or "").strip():
+            return (
+                "Rejected: score 20/20 on 'memory' requires a non-empty agent/component communication pattern "
+                "(`set-memory-arch --communication ...`)."
+            )
+        if not (mem.get("failure_modes") or []):
+            return (
+                "Rejected: score 20/20 on 'memory' requires at least 1 memory failure mode "
+                "(`set-memory-arch --failure-mode ...`)."
             )
 
     if dimension == "differentiation" and score > 0:
@@ -488,21 +635,118 @@ def record_adr(
     return entry
 
 
+def _tokenize_keywords(text: str) -> set[str]:
+    stop = {
+        "the", "and", "for", "with", "from", "into", "that", "this", "over", "under", "step",
+        "implement", "build", "add", "create", "use", "using", "via", "per", "all", "only",
+    }
+    return {
+        tok
+        for tok in re.findall(r"[a-z0-9]{3,}", text.lower())
+        if tok not in stop
+    }
+
+
+def build_ticket_acceptance_criteria(
+    title: str,
+    what_to_build: str,
+    decisions: list[dict[str, Any]],
+    critiques: list[dict[str, Any]],
+    now_tools: list[dict[str, Any]],
+    mem: dict[str, Any],
+) -> list[str]:
+    """
+    Generate concrete, ticket-specific acceptance criteria derived from the ticket's deliverable,
+    matching ADRs, matching red-team critiques, and matching Day-1 tools.
+    """
+    criteria: list[str] = []
+    step_tokens = _tokenize_keywords(f"{title} {what_to_build}")
+
+    # 1. Concrete deliverable clauses from what_to_build / title (never split inside parentheses)
+    sub_clauses = [
+        c.strip(" .;,")
+        for c in re.split(r"(?:;|\band\b)(?![^(]*\))", what_to_build)
+        if len(c.strip(" .;,")) >= 12
+    ]
+    if len(sub_clauses) >= 2:
+        for clause in sub_clauses[:2]:
+            criteria.append(f"- [ ] Deliverable verified: **{clause}**.")
+    else:
+        criteria.append(f"- [ ] Vertical slice implemented and verified: **{what_to_build.strip(' .')}**.")
+
+    # 2. Match specific ADRs by keyword overlap (or fall back to the most relevant ADR)
+    matched_adrs = [
+        a for a in decisions
+        if len(step_tokens & _tokenize_keywords(f"{a.get('title', '')} {a.get('decision', '')} {a.get('dimension', '')}")) >= 1
+    ]
+    if not matched_adrs and decisions:
+        matched_adrs = [decisions[0]]
+    for a in matched_adrs[:2]:
+        criteria.append(
+            f"- [ ] Enforces **{a['id']} ({a['title']})**: {a['decision'].strip(' .')}."
+        )
+
+    # 3. Match specific Red-Team Critiques / failure modes by keyword overlap
+    matched_crits = [
+        c for c in critiques
+        if len(step_tokens & _tokenize_keywords(f"{c.get('title', '')} {c.get('attack', '')} {c.get('mitigation', '')}")) >= 1
+    ]
+    for c in matched_crits[:2]:
+        criteria.append(
+            f"- [ ] Stress-tested against **[{c.get('severity', 'high').upper()}] {c.get('title')}**: {c.get('mitigation').strip(' .')}."
+        )
+
+    # 4. If no critique matched directly, check memory failure modes or Day-1 tools matching this slice
+    if not matched_crits:
+        mem_fms = mem.get("failure_modes") or []
+        matched_fms = [fm for fm in mem_fms if len(step_tokens & _tokenize_keywords(fm)) >= 1]
+        if matched_fms:
+            criteria.append(f"- [ ] Verifies memory failure guard: {matched_fms[0].strip(' .')}.")
+        elif critiques:
+            c0 = critiques[0]
+            criteria.append(
+                f"- [ ] Includes regression test for **{c0.get('title')}** ({c0.get('mitigation').strip(' .')})."
+            )
+
+    matched_tools = [
+        t for t in now_tools
+        if len(step_tokens & _tokenize_keywords(f"{t.get('recommended', '')} {t.get('purpose', '')}")) >= 1
+    ]
+    if matched_tools:
+        t0 = matched_tools[0]
+        criteria.append(
+            f"- [ ] Integrates Day-1 tool **{t0.get('recommended')}** (`{t0.get('config_proof') or t0.get('category')}`) for {t0.get('purpose').lower()}."
+        )
+
+    criteria.append(
+        f"- [ ] Automated unit/integration tests for `{slugify(title, max_len=36)}` pass with zero regressions."
+    )
+    return criteria
+
+
 def export_tickets_to_dir(
     workspace: Path,
     state: dict[str, Any],
     decisions: list[dict[str, Any]],
     issues_dir: Path | None = None,
+    is_draft: bool | None = None,
 ) -> list[Path]:
     """
-    Generate individual, dependency-ordered vertical-slice issue files under `.preflight/issues/NN-<slug>.md`
-    (plus an `INDEX.md` task graph) from the locked implementation steps, Stack Explained `NOW` tools,
+    Generate individual, ordered vertical-slice issue files under `.preflight/issues/NN-<slug>.md`
+    (plus an `INDEX.md` ordered list) from the locked implementation steps, Stack Explained `NOW` tools,
     Memory Architecture, and Decision Ledger (ADRs).
+    When `is_draft` is True (e.g. exported via `--force` while Readiness Gate is locked), every ticket
+    and `INDEX.md` is explicitly watermarked as `DRAFT` with status `draft`.
     """
     target_dir = issues_dir or (get_preflight_dir(workspace) / "issues")
     target_dir.mkdir(parents=True, exist_ok=True)
     for old_f in target_dir.glob("*.md"):
         old_f.unlink()
+
+    _, unlocked, _ = evaluate_gate(state, workspace)
+    draft = (not unlocked) if is_draft is None else is_draft
+    status_label = "draft" if draft else "ready-for-agent"
+    title_prefix = "[DRAFT] " if draft else ""
 
     project_name = state.get("project_name") or "Untitled Project"
     sys_design = state.get("system_design") or {}
@@ -515,7 +759,7 @@ def export_tickets_to_dir(
     if not raw_steps:
         raw_steps = [
             f"Bootstrap {project_name} Day-1 stack, lockfiles, and project skeleton",
-            f"Implement core state & memory layer ({mem.get('strategy') or 'transactional state'}) with failure-mode guards",
+            f"Implement core state & memory layer ({format_memory_strategy_display(mem)}) with failure-mode guards",
             f"Implement core domain workflow and prior-art differentiation features for {project_name}",
             "Add adversarial stress tests, rate-limit/bottleneck mitigations, and end-to-end verification",
         ]
@@ -523,13 +767,24 @@ def export_tickets_to_dir(
     created_files: list[Path] = []
     prev_ticket_ref = "None (can start immediately)"
     index_lines = [
-        f"# Implementation Ticket Graph: {project_name}",
+        f"# {title_prefix}Ordered Implementation Tickets: {project_name}",
         "",
-        "Work these tickets sequentially in dependency order (one vertical slice per session/commit):",
-        "",
-        "| # | Ticket File | Title | Blocked By | Status |",
-        "| :---: | :--- | :--- | :--- | :---: |",
     ]
+    if draft:
+        index_lines.extend(
+            [
+                "> ⚠️ **DRAFT TICKETS — READINESS GATE LOCKED:** These tickets were exported with `--force` before the PreFlight Readiness Gate passed. Complete architecture validation before coding.",
+                "",
+            ]
+        )
+    index_lines.extend(
+        [
+            "Work these tickets in order (one vertical slice per session/commit). Use `Title :: Details :: BlockedBy` in `set-design --step` to declare custom or parallel dependency edges:",
+            "",
+            "| # | Ticket File | Title | Blocked By | Status |",
+            "| :---: | :--- | :--- | :--- | :---: |",
+        ]
+    )
 
     for idx, raw_step in enumerate(raw_steps, start=1):
         clean_step = strip_step_prefix(raw_step)
@@ -537,8 +792,8 @@ def export_tickets_to_dir(
         if "::" in clean_step:
             parts = [p.strip() for p in clean_step.split("::")]
             title = parts[0]
-            what_to_build = parts[1] if len(parts) > 1 else parts[0]
-            blocked_by = parts[2] if len(parts) > 2 else prev_ticket_ref
+            what_to_build = parts[1] if len(parts) > 1 and parts[1] else parts[0]
+            blocked_by = parts[2] if len(parts) > 2 and parts[2] else prev_ticket_ref
         else:
             title = clean_step
             what_to_build = clean_step
@@ -547,11 +802,11 @@ def export_tickets_to_dir(
         slug = slugify(title)
         filename = f"{idx:02d}-{slug}.md"
         file_path = target_dir / filename
-        ticket_id = f"{idx:02d}: {title}"
+        ticket_id = f"{title_prefix}{idx:02d}: {title}"
 
         adr_refs = [f"- **{a['id']} ({a['title']})**: {a['decision']}" for a in decisions]
         tool_refs = [
-            f"- **{t.get('recommended')}** (`{t.get('config_proof') or t.get('category')}`): {t.get('purpose')} — _{t.get('why')}_"
+            f"- **{t.get('recommended')}** (`{t.get('config_proof') or t.get('category')}` — `{t.get('proof_status', 'claimed-unverified')}`): {t.get('purpose')} — _{t.get('why')}_"
             for t in now_tools
         ]
         crit_refs = [
@@ -562,19 +817,30 @@ def export_tickets_to_dir(
         ticket_lines = [
             f"# {ticket_id}",
             "",
-            f"**What to build:** {what_to_build}",
-            "",
-            f"**Blocked by:** {blocked_by}",
-            "",
-            "**Status:** ready-for-agent",
-            "",
-            "## Locked Architecture & Stack Constraints",
-            "",
-            "- **Spec Reference:** `.preflight/SPEC.md` & `.preflight/STACK.md`",
         ]
+        if draft:
+            ticket_lines.extend(
+                [
+                    "> ⚠️ **DRAFT — DO NOT EXECUTE YET:** Exported via `--force` while Readiness Gate is locked.",
+                    "",
+                ]
+            )
+        ticket_lines.extend(
+            [
+                f"**What to build:** {what_to_build}",
+                "",
+                f"**Blocked by:** {blocked_by}",
+                "",
+                f"**Status:** {status_label}",
+                "",
+                "## Locked Architecture & Stack Constraints",
+                "",
+                "- **Spec Reference:** `.preflight/SPEC.md` & `.preflight/STACK.md`",
+            ]
+        )
         if mem.get("strategy"):
             ticket_lines.append(
-                f"- **Memory & Agent Communication (`{mem['strategy']}`):** {mem.get('agent_communication_pattern') or '—'}"
+                f"- **Memory & Agent Communication (`{format_memory_strategy_display(mem)}`):** {mem.get('agent_communication_pattern') or '—'}"
             )
         if tool_refs:
             ticket_lines.extend(["", "### Day-1 Stack (`NOW` Tools to Use)", *tool_refs])
@@ -583,15 +849,20 @@ def export_tickets_to_dir(
         if crit_refs:
             ticket_lines.extend(["", "### Red-Team Mitigations to Enforce", *crit_refs])
 
+        specific_criteria = build_ticket_acceptance_criteria(
+            title=title,
+            what_to_build=what_to_build,
+            decisions=decisions,
+            critiques=critiques,
+            now_tools=now_tools,
+            mem=mem,
+        )
         ticket_lines.extend(
             [
                 "",
                 "## Acceptance Criteria",
                 "",
-                f"- [ ] End-to-end vertical slice for **{title}** is implemented and verifiable.",
-                "- [ ] Unit/integration tests written test-first covering happy path and stress-tested edge cases.",
-                "- [ ] Respects all locked ADRs in `docs/adr/` and Day-1 stack constraints in `.preflight/STACK.md`.",
-                "- [ ] Full test suite passes with zero regressions.",
+                *specific_criteria,
                 "",
             ]
         )
@@ -599,7 +870,7 @@ def export_tickets_to_dir(
         file_path.write_text("\n".join(ticket_lines), encoding="utf-8")
         created_files.append(file_path)
         index_lines.append(
-            f"| `{idx:02d}` | [{filename}](./{filename}) | {title} | {blocked_by} | `ready-for-agent` |"
+            f"| `{idx:02d}` | [{filename}](./{filename}) | {title_prefix}{title} | {blocked_by} | `{status_label}` |"
         )
         prev_ticket_ref = f"`{idx:02d}` ({filename})"
 
@@ -655,6 +926,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="When used with --reset, also delete .preflight/cache.db",
     )
+    p_init.add_argument(
+        "--keep-adrs",
+        action="store_true",
+        help="When used with --reset, keep ADR markdown files recorded in .preflight/decisions.json on disk",
+    )
 
     p_reset = sub.add_parser(
         "reset",
@@ -668,7 +944,7 @@ def main(argv: list[str] | None = None) -> int:
     p_reset.add_argument(
         "--keep-adrs",
         action="store_true",
-        help="Keep existing docs/adr/NNNN-*.md files on disk",
+        help="Keep ADR markdown files recorded in .preflight/decisions.json on disk (pre-existing ADRs are always preserved)",
     )
 
     p_score = sub.add_parser("update-dimension", help="Update a dimension score & notes (enforces evidence rules)")
@@ -705,13 +981,20 @@ def main(argv: list[str] | None = None) -> int:
 
     p_mem = sub.add_parser(
         "set-memory-arch",
-        help="Configure agent communication pattern, memory strategy (stateless, SQLite, FTS, RAG, Vector DB), and memory failure modes",
+        help="Configure agent communication pattern, primary + secondary memory strategies (stateless, SQLite, FTS, RAG, Vector DB), and memory failure modes",
     )
     p_mem.add_argument(
         "--strategy",
         choices=MEMORY_STRATEGIES,
         required=True,
         help="Primary memory architecture (stateless, transactional-db, lexical-fts, rag-vector-db, hybrid-search, episodic-agent-state)",
+    )
+    p_mem.add_argument(
+        "--secondary-strategy",
+        action="append",
+        choices=MEMORY_STRATEGIES,
+        default=[],
+        help="Optional secondary/combined memory strategy (can be passed multiple times, e.g. transactional-db + lexical-fts + episodic-agent-state)",
     )
     p_mem.add_argument(
         "--communication",
@@ -737,7 +1020,7 @@ def main(argv: list[str] | None = None) -> int:
         "--failure-mode",
         action="append",
         default=[],
-        help="Specific memory failure mode we might face and its mitigation (can be passed multiple times)",
+        help="Specific memory failure mode we might face and its mitigation (can be passed multiple times; >= 1 required)",
     )
 
     p_crit = sub.add_parser("add-critique", help="Add an adversarial red-team critique finding")
@@ -810,7 +1093,7 @@ def main(argv: list[str] | None = None) -> int:
             reset_workspace_state(
                 workspace=workspace,
                 purge_cache=args.purge_cache,
-                clear_adrs=True,
+                clear_adrs=not args.keep_adrs,
             )
             state = default_state(name=args.name, summary=args.summary)
         else:
@@ -854,6 +1137,7 @@ def main(argv: list[str] | None = None) -> int:
             score=args.score,
             summary=args.summary,
             edge_cases=existing_ecs,
+            state=state,
         )
         if err:
             print(f"ERROR: {err}", file=sys.stderr)
@@ -869,6 +1153,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "add-tool":
         state = load_state(workspace)
         tools = state.setdefault("tooling_recommendations", [])
+        proof_status, proof_source = verify_config_proof(
+            workspace=workspace,
+            config_proof=args.config_proof,
+            recommended=args.recommended,
+        )
         entry = {
             "category": args.category,
             "purpose": args.purpose.strip(),
@@ -877,7 +1166,15 @@ def main(argv: list[str] | None = None) -> int:
             "alternatives": args.alternatives.strip(),
             "stage": args.stage,
             "config_proof": args.config_proof.strip(),
+            "proof_status": proof_status,
+            "proof_source": proof_source,
         }
+        if proof_status != "verified" and args.config_proof.strip():
+            print(
+                f"WARNING: Config proof '{args.config_proof.strip()}' for '{args.recommended.strip()}' was not found "
+                "in `.preflight/prior-art.json` (`observed_stack_configs`) or workspace files; marked as `claimed-unverified`.",
+                file=sys.stderr,
+            )
         # Replace if same category + purpose already exists, otherwise append
         replaced = False
         for idx, existing in enumerate(tools):
@@ -892,7 +1189,7 @@ def main(argv: list[str] | None = None) -> int:
             tools.append(entry)
         save_state(workspace, state)
         print(
-            f"Recorded Stack Explained [{entry['stage'].upper()}] [{entry['category']}]: "
+            f"Recorded Stack Explained [{entry['stage'].upper()}] [{entry['category']}] ({proof_status}): "
             f"{entry['recommended']} ({entry['purpose']})"
         )
         return 0
@@ -904,7 +1201,18 @@ def main(argv: list[str] | None = None) -> int:
         for fm in args.failure_mode:
             if fm.strip() and fm.strip() not in existing_fms:
                 existing_fms.append(fm.strip())
+        if not existing_fms:
+            print(
+                "ERROR: `set-memory-arch` requires at least 1 `--failure-mode` describing an anticipated memory failure and mitigation.",
+                file=sys.stderr,
+            )
+            return 2
+        existing_secs = list(mem.get("secondary_strategies") or [])
+        for sec in args.secondary_strategy:
+            if sec.strip() and sec.strip() != args.strategy and sec.strip() not in existing_secs:
+                existing_secs.append(sec.strip())
         mem["strategy"] = args.strategy
+        mem["secondary_strategies"] = existing_secs
         mem["agent_communication_pattern"] = args.communication.strip()
         if args.workflow:
             mem["workflow_memory_flow"] = args.workflow.strip()
@@ -913,7 +1221,10 @@ def main(argv: list[str] | None = None) -> int:
             mem["alternatives_considered"] = args.alternatives.strip()
         mem["failure_modes"] = existing_fms
         save_state(workspace, state)
-        print(f"Updated memory_architecture: strategy={args.strategy} ({len(existing_fms)} failure modes tracked)")
+        print(
+            f"Updated memory_architecture: strategy={format_memory_strategy_display(mem)} "
+            f"({len(existing_fms)} failure modes tracked)"
+        )
         return 0
 
     if args.cmd == "add-critique":
@@ -1011,10 +1322,12 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
+        is_draft = not unlocked
         decisions = load_decisions(workspace)
         out_dir = Path(args.output_dir).resolve() if args.output_dir else (get_preflight_dir(workspace) / "issues")
-        created = export_tickets_to_dir(workspace, state, decisions, issues_dir=out_dir)
-        print(f"Exported {len(created)} ordered ticket file(s) to {out_dir}:")
+        created = export_tickets_to_dir(workspace, state, decisions, issues_dir=out_dir, is_draft=is_draft)
+        draft_note = " [DRAFT — Readiness Gate Locked]" if is_draft else ""
+        print(f"Exported {len(created)} ordered ticket file(s){draft_note} to {out_dir}:")
         for f in created:
             print(f"  - {f.relative_to(workspace) if f.is_relative_to(workspace) else f}")
         return 0

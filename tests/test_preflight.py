@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
+import base64
+import io
 import json
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "skills" / "preflight" / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
@@ -16,6 +18,25 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 import render_blueprint  # noqa: E402
 import scout  # noqa: E402
 import state  # noqa: E402
+
+
+class _FakeHTTPResponse:
+    def __init__(self, payload: object, headers: dict[str, str] | None = None) -> None:
+        self._bytes = json.dumps(payload).encode("utf-8")
+        self.headers = headers or {
+            "X-RateLimit-Remaining": "29",
+            "X-RateLimit-Limit": "30",
+            "X-RateLimit-Reset": "1999999999",
+        }
+
+    def read(self) -> bytes:
+        return self._bytes
+
+    def __enter__(self) -> _FakeHTTPResponse:
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+        return False
 
 
 class TestPreFlightPipeline(unittest.TestCase):
@@ -81,7 +102,43 @@ class TestPreFlightPipeline(unittest.TestCase):
         )
         self.assertEqual(rc_no_ec, 2)
 
-        # 3. Attempting to score differentiation > 0 before running scout.py (.preflight/prior-art.json missing) MUST fail
+        # 3. Attempting score=20 on 'memory' BEFORE running set-memory-arch MUST fail
+        rc_mem_unset = state.main(
+            [
+                "--workspace",
+                str(self.workspace),
+                "update-dimension",
+                "--dimension",
+                "memory",
+                "--score",
+                "20",
+                "--summary",
+                "Single-writer SQLite WAL mode with bounded 50MB log ring buffer.",
+                "--edge-case",
+                "Concurrent step heartbeats serialized via single Go channel",
+                "--edge-case",
+                "Power-loss recovery replays WAL frames cleanly",
+            ]
+        )
+        self.assertEqual(rc_mem_unset, 2)
+
+        # 4. Attempting set-memory-arch with 0 failure modes MUST fail
+        rc_mem_no_fm = state.main(
+            [
+                "--workspace",
+                str(self.workspace),
+                "set-memory-arch",
+                "--strategy",
+                "transactional-db",
+                "--communication",
+                "Single-writer channel",
+                "--rationale",
+                "Deterministic state transitions",
+            ]
+        )
+        self.assertEqual(rc_mem_no_fm, 2)
+
+        # 5. Attempting to score differentiation > 0 before running scout.py (.preflight/prior-art.json missing) MUST fail
         rc_no_scout = state.main(
             [
                 "--workspace",
@@ -116,16 +173,16 @@ class TestPreFlightPipeline(unittest.TestCase):
 
         # Write a realistic prior-art.json as produced by scout.py
         prior_art = {
-            "scouted_at": "2026-10-27T20:00:00+00:00",
+            "scouted_at": "2026-10-28T00:00:00+00:00",
             "auth_source": "gh-cli",
             "rate_limit": {"search_api_quota": "30 req/min", "remaining": 28, "limit": 30},
-            "queries": ["dag scheduler single binary", "dagu workflow"],
+            "queries": ["dagu language:go", "dkron language:go"],
             "active_incumbents": [
                 {
-                    "full_name": "dagu-org/dagu",
-                    "html_url": "https://github.com/dagu-org/dagu",
-                    "description": "Cron alternative with a Web UI and DAG runner in a single binary",
-                    "stars": 6500,
+                    "full_name": "dagucloud/dagu",
+                    "html_url": "https://github.com/dagucloud/dagu",
+                    "description": "Self-hostable workflow orchestrator in a single binary",
+                    "stars": 4468,
                     "forks": 380,
                     "open_issues_count": 45,
                     "language": "Go",
@@ -134,47 +191,58 @@ class TestPreFlightPipeline(unittest.TestCase):
                     "pushed_at": "2026-10-20T00:00:00Z",
                     "archived": False,
                     "inactive_days": 7,
-                    "star_velocity_per_month": 120.4,
+                    "star_velocity_per_month": 81.29,
                     "classification": "active_incumbent",
                     "graveyard_reason": "",
+                    "detected_configs": [
+                        {"config_file": "Dockerfile", "tool": "Docker (Dockerfile)", "category": "container-runtime"}
+                    ],
                 }
             ],
             "graveyard_repos": [
                 {
-                    "full_name": "old-org/dead-cron",
-                    "html_url": "https://github.com/old-org/dead-cron",
+                    "full_name": "shunfei/cronsun",
+                    "html_url": "https://github.com/shunfei/cronsun",
                     "description": "Distributed cron over etcd",
-                    "stars": 410,
-                    "forks": 32,
+                    "stars": 2908,
+                    "forks": 320,
                     "open_issues_count": 19,
                     "language": "Go",
                     "topics": [],
                     "created_at": "2019-01-01T00:00:00Z",
                     "pushed_at": "2023-01-01T00:00:00Z",
-                    "archived": True,
-                    "inactive_days": 1395,
-                    "star_velocity_per_month": 4.3,
+                    "archived": False,
+                    "inactive_days": 874,
+                    "star_velocity_per_month": 30.1,
                     "classification": "graveyard",
-                    "graveyard_reason": "Explicitly archived by maintainer",
+                    "graveyard_reason": "Dormant heuristic: no pushes in 874 days (>365d threshold)",
+                }
+            ],
+            "observed_stack_configs": [
+                {
+                    "tool": "Docker (Dockerfile)",
+                    "category": "container-runtime",
+                    "config_file": "Dockerfile",
+                    "repos": ["dagucloud/dagu"],
                 }
             ],
             "pain_points": [
                 {
-                    "repo_full_name": "dagu-org/dagu",
-                    "issue_number": 412,
-                    "title": "Zombie child processes survive when parent daemon receives SIGKILL",
-                    "issue_url": "https://github.com/dagu-org/dagu/issues/412",
-                    "category": "bug_or_failure",
-                    "labels": ["bug"],
-                    "reactions_plus_one": 14,
-                    "reactions_total": 16,
-                    "comments_count": 6,
-                    "body_excerpt": "When the worker crashes, spawned bash subshells continue running in the background.",
+                    "repo_full_name": "dagucloud/dagu",
+                    "issue_number": 1260,
+                    "title": "Worker Sync Mode for Remote Storage",
+                    "issue_url": "https://github.com/dagucloud/dagu/issues/1260",
+                    "category": "top_voted",
+                    "labels": ["enhancement"],
+                    "reactions_plus_one": 4,
+                    "reactions_total": 4,
+                    "comments_count": 5,
+                    "body_excerpt": "Currently a distributed DAG run only succeeds when workers share the same filesystem tree.",
                     "top_comments": [
                         {
-                            "author": "ops-lead",
-                            "reactions": 8,
-                            "excerpt": "We had to wrap every step in Linux cgroups v2 or set PR_SET_PDEATHSIG so orphans get reaped.",
+                            "author": "ghansham",
+                            "reactions": 2,
+                            "excerpt": "This feature is going to be a game changer for master worker coordination.",
                         }
                     ],
                     "created_at": "2026-04-10T00:00:00Z",
@@ -185,6 +253,30 @@ class TestPreFlightPipeline(unittest.TestCase):
         (self.workspace / ".preflight" / "prior-art.json").write_text(
             json.dumps(prior_art, indent=2), encoding="utf-8"
         )
+
+        # Configure combined memory architecture (transactional-db + lexical-fts + episodic-agent-state)
+        rc_mem = state.main(
+            [
+                "--workspace",
+                str(self.workspace),
+                "set-memory-arch",
+                "--strategy",
+                "transactional-db",
+                "--secondary-strategy",
+                "lexical-fts",
+                "--secondary-strategy",
+                "episodic-agent-state",
+                "--communication",
+                "Single-writer Go channel batching step heartbeats every 100ms into SQLite WAL",
+                "--workflow",
+                "Append-only state transitions + FTS5 log indexing",
+                "--rationale",
+                "Provides ACID recovery and exact log search without external servers",
+                "--failure-mode",
+                "SQLITE_BUSY under 50+ concurrent step heartbeats -> Mitigated by single writer goroutine",
+            ]
+        )
+        self.assertEqual(rc_mem, 0)
 
         # Score the first 4 dimensions with real summaries and >=2 edge cases
         for dim in ("problem", "scope", "memory", "bottlenecks"):
@@ -227,7 +319,7 @@ class TestPreFlightPipeline(unittest.TestCase):
         )
         self.assertEqual(rc_uncited, 2)
 
-        # Differentiation score=20 citing `dagu-org/dagu` and `old-org/dead-cron` succeeds
+        # Differentiation score=20 citing `dagucloud/dagu` and `shunfei/cronsun` succeeds
         rc_cited = state.main(
             [
                 "--workspace",
@@ -238,19 +330,63 @@ class TestPreFlightPipeline(unittest.TestCase):
                 "--score",
                 "20",
                 "--summary",
-                "Unlike dagu-org/dagu (#412 orphan process leak), EdgeCron isolates every step in a cgroup v2 scope and avoids the etcd dependency that killed old-org/dead-cron.",
+                "Unlike dagucloud/dagu (#1260 shared-filesystem requirement), EdgeCron uses an asynchronous mTLS outbox and avoids the etcd coupling in shunfei/cronsun.",
                 "--edge-case",
-                "Orphaned subprocess cleanup on SIGKILL via cgroup.kill (solves dagu-org/dagu#412)",
+                "Asynchronous mTLS outbox sync without shared NFS (solves dagucloud/dagu#1260)",
                 "--edge-case",
-                "Zero external coordination store required unlike old-org/dead-cron",
+                "Zero external coordination store required unlike shunfei/cronsun",
             ]
         )
         self.assertEqual(rc_cited, 0)
 
-        # Even at 100% dimension score, gate is STILL locked until >=1 ADR and >=1 Critique exist
+        # Even at 100% dimension score + memory strategy set, gate is STILL locked until >=1 tool, >=1 ADR, and >=1 Critique exist
         st = state.load_state(self.workspace)
         self.assertEqual(st["readiness_score"], 100)
         self.assertFalse(st["readiness_unlocked"])
+
+        # Add a verified tool (Dockerfile is in prior-art.json observed_stack_configs) and an unverified tool (Chart.yaml)
+        state.main(
+            [
+                "--workspace",
+                str(self.workspace),
+                "add-tool",
+                "--category",
+                "container-runtime",
+                "--recommended",
+                "Docker (Dockerfile)",
+                "--stage",
+                "now",
+                "--config-proof",
+                "Dockerfile",
+                "--purpose",
+                "Reproducible static binary build & cgroup v2 test harness",
+                "--why",
+                "Matches dagucloud/dagu setup",
+                "--alternatives",
+                "Bare host build",
+            ]
+        )
+        state.main(
+            [
+                "--workspace",
+                str(self.workspace),
+                "add-tool",
+                "--category",
+                "orchestration-deploy",
+                "--recommended",
+                "Kubernetes Helm",
+                "--stage",
+                "later",
+                "--config-proof",
+                "Chart.yaml",
+                "--purpose",
+                "Central hub scaling",
+                "--why",
+                "Deferred until V2",
+                "--alternatives",
+                "Single binary systemd",
+            ]
+        )
 
         # Add ADR and Critique
         state.main(
@@ -265,7 +401,7 @@ class TestPreFlightPipeline(unittest.TestCase):
                 "--rejected",
                 "Plain os/exec process groups",
                 "--rationale",
-                "Prevents double-forked orphan processes (dagu-org/dagu#412).",
+                "Prevents double-forked orphan processes.",
                 "--dimension",
                 "bottlenecks",
             ]
@@ -288,12 +424,15 @@ class TestPreFlightPipeline(unittest.TestCase):
 
         st = state.load_state(self.workspace)
         self.assertTrue(st["readiness_unlocked"])
+        tools_by_name = {t["recommended"]: t for t in st["tooling_recommendations"]}
+        self.assertEqual(tools_by_name["Docker (Dockerfile)"]["proof_status"], "verified")
+        self.assertEqual(tools_by_name["Kubernetes Helm"]["proof_status"], "claimed-unverified")
 
         # render_blueprint.py should STILL fail if set-design hasn't populated Mermaid diagrams
         rc_no_diagrams = render_blueprint.main(["--workspace", str(self.workspace)])
         self.assertEqual(rc_no_diagrams, 2)
 
-        # Populate diagrams, trade-offs, and steps via `set-design`
+        # Populate diagrams, trade-offs, and steps (including custom :: BlockedBy edge) via `set-design`
         rc_design = state.main(
             [
                 "--workspace",
@@ -308,305 +447,279 @@ class TestPreFlightPipeline(unittest.TestCase):
                 "--option",
                 "etcd Cluster|Multi-node HA|High operational overhead on edge|Rejected",
                 "--step",
-                "Implement SQLite WAL state machine and single-writer batch loop",
+                "Implement SQLite WAL state machine and single-writer 100ms batch loop",
                 "--step",
-                "Implement cgroup v2 process runner with orphan reaping",
+                "Implement cgroup v2 process runner :: Spawn each step in /sys/fs/cgroup/edgecron with cgroup.kill :: `01`",
             ]
         )
         self.assertEqual(rc_design, 0)
 
-        # Now render_blueprint.py succeeds and writes both blueprint_report.html and .preflight/SPEC.md
+        # Now render_blueprint.py succeeds and writes blueprint_report.html, .preflight/SPEC.md, .preflight/STACK.md, and .preflight/issues/
         rc_render_ok = render_blueprint.main(["--workspace", str(self.workspace)])
         self.assertEqual(rc_render_ok, 0)
 
         html_path = self.workspace / "blueprint_report.html"
         spec_path = self.workspace / ".preflight" / "SPEC.md"
+        stack_path = self.workspace / ".preflight" / "STACK.md"
         issues_dir = self.workspace / ".preflight" / "issues"
         self.assertTrue(html_path.exists())
         self.assertTrue(spec_path.exists())
+        self.assertTrue(stack_path.exists())
         self.assertTrue((issues_dir / "INDEX.md").exists())
+
+        stack_text = stack_path.read_text(encoding="utf-8")
+        self.assertIn("Verified (`scout:Dockerfile`)", stack_text)
+        self.assertIn("Claimed / Unverified: `Chart.yaml`", stack_text)
+        self.assertIn("transactional-db (primary) + lexical-fts, episodic-agent-state (secondary)", stack_text)
+
         ticket_files = sorted(f.name for f in issues_dir.glob("[0-9][0-9]-*.md"))
         self.assertEqual(len(ticket_files), 2)
         first_ticket = (issues_dir / ticket_files[0]).read_text(encoding="utf-8")
         second_ticket = (issues_dir / ticket_files[1]).read_text(encoding="utf-8")
         self.assertIn("**Blocked by:** None (can start immediately)", first_ticket)
-        self.assertIn("ADR-0001", first_ticket)
-        self.assertIn(f"**Blocked by:** `01` ({ticket_files[0]})", second_ticket)
+        self.assertIn("**Status:** ready-for-agent", first_ticket)
+        self.assertIn("SQLite WAL Lock Contention Under High Concurrency", first_ticket)
+        self.assertIn("**Blocked by:** `01`", second_ticket)
+        self.assertIn("Linux cgroups v2 Step Isolation", second_ticket)
 
         html_text = html_path.read_text(encoding="utf-8")
         spec_text = spec_path.read_text(encoding="utf-8")
-        self.assertIn("dagu-org/dagu#412", html_text)
-        self.assertIn("@ops-lead", html_text)
-        self.assertIn("Copy Spec Markdown", html_text)
-        self.assertIn("## 5. System Architecture Diagrams", spec_text)
+        self.assertIn("dagucloud/dagu#1260", html_text)
+        self.assertIn("@ghansham", html_text)
+        self.assertIn("visual diagram rendering requires internet access for Mermaid CDN", html_text)
+        self.assertNotIn("offline fallback", html_text)
+        self.assertIn("## 6. System Architecture Diagrams", spec_text)
         self.assertIn("Linux cgroups v2 Step Isolation", spec_text)
 
-    def test_scout_heuristics_preserve_markdown_skills_and_filter_zero_vote_issues(self) -> None:
-        # Markdown-only skill repo (language=None, small size, but has stars and description) MUST NOT be filtered out
-        md_skill_repo = {
-            "full_name": "author/agent-skill-pack",
-            "description": "A collection of markdown agent skills",
-            "stargazers_count": 25,
-            "forks_count": 4,
-            "has_issues": True,
-            "language": None,
-            "size": 4,
-        }
-        self.assertFalse(scout.is_noise_repo(md_skill_repo))
+    def test_reset_preserves_preexisting_adrs_and_supports_keep_adrs(self) -> None:
+        # Create a pre-existing repository ADR that is NOT part of .preflight/decisions.json
+        adr_dir = self.workspace / "docs" / "adr"
+        adr_dir.mkdir(parents=True, exist_ok=True)
+        preexisting_adr = adr_dir / "0001-existing-repo-architecture.md"
+        preexisting_adr.write_text("# ADR-0001: Pre-existing Architecture\n", encoding="utf-8")
 
-        # Org profile repo (.github) or 0-star/0-fork empty repo MUST be filtered out
-        self.assertTrue(
-            scout.is_noise_repo(
-                {"full_name": "some-org/.github", "stargazers_count": 500, "forks_count": 10}
-            )
-        )
-        self.assertTrue(
-            scout.is_noise_repo(
-                {"full_name": "user/empty-repo", "stargazers_count": 0, "forks_count": 0}
-            )
-        )
-
-        # 0-vote, 0-comment issue MUST NOT qualify as a substantive pain point
-        zero_vote_issue = {
-            "number": 10,
-            "title": "Random unvalidated suggestion",
-            "reactions": {"+1": 0, "total_count": 0},
-            "comments": 0,
-        }
-        self.assertFalse(scout.is_substantive_pain_point(zero_vote_issue))
-
-        # Issue with reactions or comments DOES qualify
-        valid_issue = {
-            "number": 11,
-            "title": "Crash when config path has spaces",
-            "reactions": {"+1": 3, "total_count": 3},
-            "comments": 1,
-        }
-        self.assertTrue(scout.is_substantive_pain_point(valid_issue))
-
-        # Top comment extraction sorts by reaction score and strips ultra-short "+1" noise comments
-        comments = [
-            {"user": {"login": "spammer"}, "body": "+1", "reactions": {"+1": 10, "total_count": 10}},
-            {
-                "user": {"login": "dev1"},
-                "body": "This happens because path quoting is missing in the subshell exec call.",
-                "reactions": {"+1": 5, "total_count": 6},
-            },
-            {
-                "user": {"login": "dev2"},
-                "body": "Confirmed on macOS 15 as well; workaround is using a symlink without spaces.",
-                "reactions": {"+1": 2, "total_count": 2},
-            },
-        ]
-        top = scout.extract_top_comments(comments, max_comments=2)
-        self.assertEqual(len(top), 2)
-        self.assertEqual(top[0]["author"], "dev1")
-        self.assertEqual(top[1]["author"], "dev2")
-
-    def test_tooling_maintenance_memory_advisor_and_fresh_reset(self) -> None:
-        # 0. Test scout.py config-file stack detection (pyproject.toml for Poetry/uv, Dockerfile, .github/workflows, .pre-commit-config.yaml)
-        signals = scout.parse_stack_signals_from_files(
-            root_entries=[
-                "pyproject.toml",
-                "uv.lock",
-                "Dockerfile",
-                "docker-compose.yml",
-                ".github",
-                ".pre-commit-config.yaml",
-            ],
-            pyproject_text="[project]\nname = 'demo'\n[tool.uv]\ndev-dependencies = []\n[tool.ruff]\nline-length = 100\n",
-            has_github_workflows=True,
-        )
-        signal_tools = {s["tool"]: s["config_file"] for s in signals}
-        self.assertEqual(signal_tools.get("uv"), "pyproject.toml ([tool.uv]) + uv.lock")
-        self.assertEqual(signal_tools.get("Ruff"), "pyproject.toml ([tool.ruff])")
-        self.assertEqual(signal_tools.get("Docker (Dockerfile)"), "Dockerfile")
-        self.assertEqual(signal_tools.get("GitHub Actions"), ".github/workflows")
-        self.assertEqual(signal_tools.get("pre-commit (.pre-commit-config.yaml)"), ".pre-commit-config.yaml")
-        # Ensure uv.lock is not duplicated as a separate entry when [tool.uv] was already detected
-        self.assertNotIn("uv (uv.lock)", signal_tools)
-
-        state.main(
-            [
-                "--workspace",
-                str(self.workspace),
-                "init",
-                "--name",
-                "AgentDocRouter",
-                "--summary",
-                "Multi-agent incident responder over runbooks",
-                "--runtime",
-                "Python 3.12",
-                "--stack",
-                "Python,SQLite FTS5,Docker",
-            ]
-        )
-
-        # 1. Record "Stack Explained" entries (what job it does, why needed now, alternative, now vs later, config proof)
-        rc_lock = state.main(
-            [
-                "--workspace",
-                str(self.workspace),
-                "add-tool",
-                "--category",
-                "dependency-lock",
-                "--purpose",
-                "Deterministic Python dependency locking and virtualenv reproducibility",
-                "--recommended",
-                "uv (uv.lock)",
-                "--stage",
-                "now",
-                "--config-proof",
-                "pyproject.toml ([tool.uv]) + uv.lock",
-                "--why",
-                "10-50x faster lockfile resolution than pip/Poetry with exact cross-platform hashes",
-                "--alternatives",
-                "Poetry (poetry.lock) if publishing complex multi-package workspaces; pip-tools (requirements.txt)",
-            ]
-        )
-        self.assertEqual(rc_lock, 0)
-
-        rc_container = state.main(
-            [
-                "--workspace",
-                str(self.workspace),
-                "add-tool",
-                "--category",
-                "container-runtime",
-                "--purpose",
-                "Reproducible production packaging and local dev parity",
-                "--recommended",
-                "Docker (multi-stage distroless/slim build)",
-                "--stage",
-                "now",
-                "--config-proof",
-                "Dockerfile",
-                "--why",
-                "Isolates Python runtime and native SQLite extensions into a 45MB read-only rootfs image",
-                "--alternatives",
-                "Nix flakes (steeper learning curve); bare virtualenv on host (drift risk)",
-            ]
-        )
-        self.assertEqual(rc_container, 0)
-
-        rc_orch = state.main(
-            [
-                "--workspace",
-                str(self.workspace),
-                "add-tool",
-                "--category",
-                "orchestration-deploy",
-                "--purpose",
-                "Multi-node horizontal container orchestration",
-                "--recommended",
-                "Kubernetes (k3s / Helm)",
-                "--stage",
-                "later",
-                "--config-proof",
-                "Chart.yaml / k8s/",
-                "--why",
-                "Defer until >100 RPS or multi-node HA is required; V1 uses single-node SQLite WAL over Docker Compose",
-                "--alternatives",
-                "Docker Compose (used NOW for Day-1 single-node deployment); Fly.io Machines",
-            ]
-        )
-        self.assertEqual(rc_orch, 0)
-
-        # 2. Configure Memory & Agent Communication Architecture (set-memory-arch)
-        rc_mem = state.main(
-            [
-                "--workspace",
-                str(self.workspace),
-                "set-memory-arch",
-                "--strategy",
-                "hybrid-search",
-                "--communication",
-                "Typed JSON handoff envelopes between Triage Agent and Runbook Executor (no raw chat history forwarding)",
-                "--workflow",
-                "Triage Agent writes structured incident state to SQLite WAL; Runbook Executor queries SQLite FTS5 + local embeddings",
-                "--rationale",
-                "Pure Vector DB misses exact error codes (e.g. ERR_TLS_CERT_ALTNAME_INVALID); hybrid FTS5 + embeddings catches both exact symbols and semantic runbooks",
-                "--alternatives",
-                "Pure Vector DB (Pinecone/Chroma — poor exact error-code recall); Full context window stuffing (causes context rot after 5 turns)",
-                "--failure-mode",
-                "Context window bloat across multi-agent turns -> Mitigated by strict 2KB JSON handoff schema",
-                "--failure-mode",
-                "Stale runbook embeddings after markdown edits -> Mitigated by content-SHA256 invalidation hook on git pull",
-            ]
-        )
-        self.assertEqual(rc_mem, 0)
-
-        # Verify .preflight/STACK.md was automatically created and populated
-        stack_md_path = self.workspace / ".preflight" / "STACK.md"
-        self.assertTrue(stack_md_path.exists())
-        stack_md = stack_md_path.read_text(encoding="utf-8")
-        self.assertIn("uv (uv.lock)", stack_md)
-        self.assertIn("poetry.lock", stack_md)
-        self.assertIn("Docker", stack_md)
-        self.assertIn("Kubernetes", stack_md)
-        self.assertIn("hybrid-search", stack_md)
-        self.assertIn("Context window bloat", stack_md)
-
-        # 3. Score a dimension and add an ADR so state is populated
-        state.main(
-            [
-                "--workspace",
-                str(self.workspace),
-                "update-dimension",
-                "--dimension",
-                "memory",
-                "--score",
-                "20",
-                "--summary",
-                "Hybrid SQLite FTS5 + local vector search with typed JSON agent handoffs.",
-                "--edge-case",
-                "Context bloat prevented by 2KB JSON handoff schema",
-                "--edge-case",
-                "Stale embeddings invalidated via file SHA256 check",
-            ]
-        )
+        state.main(["--workspace", str(self.workspace), "init", "--name", "TempIdea"])
         state.main(
             [
                 "--workspace",
                 str(self.workspace),
                 "add-decision",
                 "--title",
-                "Use Hybrid FTS5 over Pure Vector DB",
+                "Session Specific Decision",
                 "--decision",
-                "Use SQLite FTS5 + embeddings instead of standalone Vector DB",
-                "--dimension",
-                "memory",
+                "Use SQLite WAL",
             ]
         )
-        self.assertTrue((self.workspace / "docs" / "adr").exists())
-        self.assertEqual(len(list((self.workspace / "docs" / "adr").glob("*.md"))), 1)
+        session_adr = adr_dir / "0002-session-specific-decision.md"
+        self.assertTrue(preexisting_adr.exists())
+        self.assertTrue(session_adr.exists())
 
-        # 4. Now test `state.py reset` to wipe all pre-performed scores, ADRs, and state for a fresh run
-        rc_reset = state.main(["--workspace", str(self.workspace), "reset"])
-        self.assertEqual(rc_reset, 0)
-        self.assertFalse((self.workspace / ".preflight" / "state.json").exists())
-        self.assertFalse((self.workspace / ".preflight" / "decisions.json").exists())
-        self.assertFalse((self.workspace / ".preflight" / "STACK.md").exists())
-        self.assertEqual(len(list((self.workspace / "docs" / "adr").glob("*.md"))), 0)
+        # 1. `reset --keep-adrs` preserves BOTH the pre-existing ADR and the session ADR
+        state.main(["--workspace", str(self.workspace), "reset", "--keep-adrs"])
+        self.assertTrue(preexisting_adr.exists())
+        self.assertTrue(session_adr.exists())
 
-        # 5. Re-initialize a brand new idea in the same folder and verify all scores start at 0
+        # Re-create state and a new session ADR (0003)
+        state.main(["--workspace", str(self.workspace), "init", "--name", "TempIdea2"])
+        state.main(
+            [
+                "--workspace",
+                str(self.workspace),
+                "add-decision",
+                "--title",
+                "Another Session Decision",
+                "--decision",
+                "Use cgroups v2",
+            ]
+        )
+        session_adr_3 = adr_dir / "0003-another-session-decision.md"
+        self.assertTrue(session_adr_3.exists())
+
+        # 2. Default `reset` deletes ONLY 0003 (recorded in decisions.json) and MUST preserve 0001 (pre-existing)!
+        state.main(["--workspace", str(self.workspace), "reset"])
+        self.assertTrue(preexisting_adr.exists())
+        self.assertFalse(session_adr_3.exists())
+
+        # 3. `init --reset --keep-adrs` also respects --keep-adrs
+        state.main(["--workspace", str(self.workspace), "init", "--name", "TempIdea3"])
+        state.main(
+            [
+                "--workspace",
+                str(self.workspace),
+                "add-decision",
+                "--title",
+                "Kept On Init Reset",
+                "--decision",
+                "Keep me",
+            ]
+        )
+        kept_adr = adr_dir / "0003-kept-on-init-reset.md"
+        self.assertTrue(kept_adr.exists())
         state.main(
             [
                 "--workspace",
                 str(self.workspace),
                 "init",
                 "--reset",
+                "--keep-adrs",
                 "--name",
-                "FreshIdeaTwo",
-                "--summary",
-                "Brand new idea in the same directory",
+                "TempIdea4",
             ]
         )
-        fresh_state = state.load_state(self.workspace)
-        self.assertEqual(fresh_state["project_name"], "FreshIdeaTwo")
-        self.assertEqual(fresh_state["readiness_score"], 0)
-        self.assertEqual(fresh_state["dimensions"]["memory"]["score"], 0)
-        self.assertEqual(len(fresh_state["tooling_recommendations"]), 0)
+        self.assertTrue(preexisting_adr.exists())
+        self.assertTrue(kept_adr.exists())
+
+    def test_force_bypass_stamps_draft_on_all_outputs_and_word_boundary_slugs(self) -> None:
+        # Word-boundary slug truncation must never leave trailing fragments like '-b' or '-and-'
+        long_title = "Implement power loss recovery planner skip latest only backfill serial and cron"
+        slug = state.slugify(long_title, max_len=60)
+        self.assertLessEqual(len(slug), 60)
+        self.assertEqual(slug, "implement-power-loss-recovery-planner-skip-latest-only")
+
+        # Initialize at 0% readiness and render with --force
+        state.main(["--workspace", str(self.workspace), "init", "--name", "UnfinishedDraft"])
+        rc = render_blueprint.main(["--workspace", str(self.workspace), "--force"])
+        self.assertEqual(rc, 0)
+
+        html_text = (self.workspace / "blueprint_report.html").read_text(encoding="utf-8")
+        spec_text = (self.workspace / ".preflight" / "SPEC.md").read_text(encoding="utf-8")
+        stack_text = (self.workspace / ".preflight" / "STACK.md").read_text(encoding="utf-8")
+        index_text = (self.workspace / ".preflight" / "issues" / "INDEX.md").read_text(encoding="utf-8")
+        ticket_files = sorted((self.workspace / ".preflight" / "issues").glob("[0-9][0-9]-*.md"))
+        first_ticket = ticket_files[0].read_text(encoding="utf-8")
+
+        self.assertIn("DRAFT BLUEPRINT (READINESS GATE LOCKED)", html_text)
+        self.assertIn("[DRAFT] System Design Specification: UnfinishedDraft", spec_text)
+        self.assertIn("DRAFT — Readiness Gate Bypassed via `--force`", spec_text)
+        self.assertNotIn("(Evidence-Verified)", spec_text)
+        self.assertIn("# [DRAFT] Stack Explained & Memory Architecture: UnfinishedDraft", stack_text)
+        self.assertIn("# [DRAFT] Ordered Implementation Tickets: UnfinishedDraft", index_text)
+        self.assertIn("`draft`", index_text)
+        self.assertIn("**Status:** draft", first_ticket)
+        self.assertNotIn("ready-for-agent", first_ticket)
+
+    def test_scout_mocked_http_and_heuristics(self) -> None:
+        # 1. Test normalize_repo_query and normalize_topic_query
+        self.assertEqual(scout.normalize_repo_query("dagu workflow"), "dagu workflow in:name,description")
+        self.assertEqual(scout.normalize_repo_query("repo:dagucloud/dagu"), "dagucloud/dagu in:name")
+        self.assertEqual(scout.normalize_topic_query("Cron Scheduler"), "topic:cron-scheduler")
+
+        # 2. Test full `scout_github` pipeline with mocked HTTP responses (zero network calls)
+        py_b64 = base64.b64encode(b"[project]\nname='demo'\n[tool.uv]\n[tool.ruff]\n").decode("ascii")
+
+        def fake_urlopen(req: object, timeout: int = 15) -> _FakeHTTPResponse:
+            url = getattr(req, "full_url", str(req))
+            if "/search/repositories" in url and "topic%3Acron" in url:
+                return _FakeHTTPResponse(
+                    {
+                        "items": [
+                            {
+                                "full_name": "old-org/dormant-cron",
+                                "html_url": "https://github.com/old-org/dormant-cron",
+                                "description": "Old cron tool",
+                                "stargazers_count": 120,
+                                "forks_count": 15,
+                                "open_issues_count": 2,
+                                "has_issues": True,
+                                "language": "Go",
+                                "license": {"spdx_id": "MIT"},
+                                "topics": ["cron"],
+                                "created_at": "2020-01-01T00:00:00Z",
+                                "pushed_at": "2022-01-01T00:00:00Z",
+                                "archived": False,
+                            }
+                        ]
+                    }
+                )
+            if "/search/repositories" in url:
+                return _FakeHTTPResponse(
+                    {
+                        "items": [
+                            {
+                                "full_name": "acme/active-scheduler",
+                                "html_url": "https://github.com/acme/active-scheduler",
+                                "description": "Active scheduler",
+                                "stargazers_count": 900,
+                                "forks_count": 50,
+                                "open_issues_count": 5,
+                                "has_issues": True,
+                                "language": "Python",
+                                "license": {"spdx_id": "Apache-2.0"},
+                                "topics": ["scheduler"],
+                                "created_at": "2025-01-01T00:00:00Z",
+                                "pushed_at": "2026-10-20T00:00:00Z",
+                                "archived": False,
+                            }
+                        ]
+                    }
+                )
+            if url.endswith("/repos/acme/active-scheduler/contents"):
+                return _FakeHTTPResponse(
+                    [
+                        {"name": "pyproject.toml"},
+                        {"name": "uv.lock"},
+                        {"name": "Dockerfile"},
+                        {"name": ".github"},
+                    ]
+                )
+            if url.endswith("/repos/acme/active-scheduler/contents/pyproject.toml"):
+                return _FakeHTTPResponse({"content": py_b64})
+            if url.endswith("/repos/acme/active-scheduler/contents/.github"):
+                return _FakeHTTPResponse([{"name": "workflows"}])
+            if "/search/issues" in url:
+                return _FakeHTTPResponse(
+                    {
+                        "items": [
+                            {
+                                "number": 42,
+                                "title": "Worker leaks zombie processes on timeout",
+                                "html_url": "https://github.com/acme/active-scheduler/issues/42",
+                                "body": "When a job times out, child processes keep running.",
+                                "labels": [{"name": "bug"}],
+                                "reactions": {"+1": 7, "total_count": 7},
+                                "comments": 2,
+                                "created_at": "2026-09-01T00:00:00Z",
+                            }
+                        ]
+                    }
+                )
+            if "/issues/42/comments" in url:
+                return _FakeHTTPResponse(
+                    [
+                        {
+                            "user": {"login": "kernel-dev"},
+                            "body": "Use cgroups v2 cgroup.kill to reap double-forked children reliably.",
+                            "reactions": {"+1": 4, "total_count": 4},
+                        }
+                    ]
+                )
+            return _FakeHTTPResponse({})
+
+        cache = scout.RepoCache(self.workspace / ".preflight" / "cache.db")
+        try:
+            with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                report = scout.scout_github(
+                    queries=["active scheduler"],
+                    cache=cache,
+                    token="fake-token",
+                    auth_source="env:GITHUB_TOKEN",
+                    tool_queries=["sqlite"],
+                    topics=["cron"],
+                )
+        finally:
+            cache.close()
+
+        self.assertIn("search_limits", report)
+        self.assertEqual(len(report["active_incumbents"]), 1)
+        self.assertEqual(report["active_incumbents"][0]["full_name"], "acme/active-scheduler")
+        self.assertEqual(len(report["graveyard_repos"]), 1)
+        self.assertIn("Dormant heuristic", report["graveyard_repos"][0]["graveyard_reason"])
+        observed_tools = {c["tool"] for c in report["observed_stack_configs"]}
+        self.assertIn("uv", observed_tools)
+        self.assertIn("Docker (Dockerfile)", observed_tools)
+        self.assertIn("GitHub Actions", observed_tools)
+        self.assertEqual(len(report["pain_points"]), 1)
+        self.assertEqual(report["pain_points"][0]["top_comments"][0]["author"], "kernel-dev")
 
 
 if __name__ == "__main__":

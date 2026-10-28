@@ -1,0 +1,1258 @@
+{
+  "scouted_at": "2026-10-28T09:24:58+00:00",
+  "auth_source": "gh-cli",
+  "rate_limit": {
+    "search_api_quota": "30 req/min",
+    "remaining": 4967,
+    "limit": 5000,
+    "reset_epoch": 1793183000
+  },
+  "search_limits": {
+    "max_repos_per_query": 8,
+    "max_incumbents_for_issues": 4,
+    "issues_per_repo": 5,
+    "sort_order": "stars:desc (single page per query; star-weighted sample)",
+    "default_free_text_scope": "in:name,description (unless explicit topic:, in:, or repo: qualifier is passed)",
+    "graveyard_heuristic": "Archived by maintainer OR >365 days since last git push. Inactivity is a maintenance signal only \u2014 never claim a repo stalled due to a specific architectural choice without issue/commit evidence.",
+    "star_velocity_heuristic": "Approximate lifetime average (total_stars / age_months), not recent adoption momentum."
+  },
+  "queries": [
+    "dagu language:go",
+    "dkron language:go",
+    "distributed cron language:go",
+    "topic:cron-scheduler"
+  ],
+  "tool_queries": [
+    "modernc.org/sqlite",
+    "robfig/cron"
+  ],
+  "active_incumbents": [
+    {
+      "full_name": "dkron-io/dkron",
+      "html_url": "https://github.com/dkron-io/dkron",
+      "description": "Dkron - Distributed, fault tolerant job scheduling system https://dkron.io",
+      "stars": 4740,
+      "forks": 418,
+      "open_issues_count": 47,
+      "language": "Go",
+      "license": "LGPL-3.0",
+      "topics": [
+        "cron",
+        "distributed-systems",
+        "fault-tolerance",
+        "scheduled-jobs"
+      ],
+      "created_at": "2015-06-10T08:13:17Z",
+      "pushed_at": "2026-10-26T19:13:11Z",
+      "archived": false,
+      "inactive_days": 1,
+      "star_velocity_per_month": 34.2,
+      "classification": "active_incumbent",
+      "graveyard_reason": "",
+      "detected_configs": [
+        {
+          "config_file": "go.sum",
+          "tool": "Go Modules (go.sum)",
+          "category": "dependency-lock"
+        },
+        {
+          "config_file": "Dockerfile",
+          "tool": "Docker (Dockerfile)",
+          "category": "container-runtime"
+        },
+        {
+          "config_file": "docker-compose.yml",
+          "tool": "Docker Compose (docker-compose.yml)",
+          "category": "orchestration-deploy"
+        },
+        {
+          "config_file": ".github/workflows",
+          "tool": "GitHub Actions",
+          "category": "ci-cd-quality"
+        },
+        {
+          "config_file": "Makefile",
+          "tool": "Make (Makefile)",
+          "category": "ci-cd-quality"
+        }
+      ],
+      "matched_query": "dkron language:go"
+    },
+    {
+      "full_name": "dagucloud/dagu",
+      "html_url": "https://github.com/dagucloud/dagu",
+      "description": "Self-hostable workflow orchestrator for teams whose main work isn't orchestration. Declarative YAML over your scripts, SSH commands, containers, etc; keep workflows separate from business logic. One binary, no database, runs on limited H/W resources. Alternative to Airflow / Cron / Job Scheduler.",
+      "stars": 4468,
+      "forks": 387,
+      "open_issues_count": 138,
+      "language": "Go",
+      "license": "GPL-3.0",
+      "topics": [
+        "agentic-workflows",
+        "ai-agents",
+        "ai-workflows",
+        "airflow-alternative",
+        "cron",
+        "dag",
+        "data-pipeline",
+        "devops",
+        "durable-execution",
+        "human-in-the-loop",
+        "job-scheduler",
+        "llm",
+        "mcp",
+        "mcp-gateway",
+        "mcp-server",
+        "self-hosted",
+        "task-automation",
+        "workflow-engine",
+        "workflow-orchestration",
+        "workflow-scheduler"
+      ],
+      "created_at": "2022-04-22T13:00:42Z",
+      "pushed_at": "2026-10-28T07:14:12Z",
+      "archived": false,
+      "inactive_days": 0,
+      "star_velocity_per_month": 81.29,
+      "classification": "active_incumbent",
+      "graveyard_reason": "",
+      "detected_configs": [
+        {
+          "config_file": "go.sum",
+          "tool": "Go Modules (go.sum)",
+          "category": "dependency-lock"
+        },
+        {
+          "config_file": "Dockerfile",
+          "tool": "Docker (Dockerfile)",
+          "category": "container-runtime"
+        },
+        {
+          "config_file": ".devcontainer",
+          "tool": "Dev Containers (.devcontainer)",
+          "category": "container-runtime"
+        },
+        {
+          "config_file": ".github/workflows",
+          "tool": "GitHub Actions",
+          "category": "ci-cd-quality"
+        },
+        {
+          "config_file": "Makefile",
+          "tool": "Make (Makefile)",
+          "category": "ci-cd-quality"
+        }
+      ],
+      "matched_query": "dagu language:go"
+    },
+    {
+      "full_name": "egeominotti/bunqueue",
+      "html_url": "https://github.com/egeominotti/bunqueue",
+      "description": "\u26a1 High-performance job queue for Bun. SQLite by default, PostgreSQL multi-broker when you scale. DLQ, cron, SQLite S3 backups, and native MCP. No Redis.",
+      "stars": 590,
+      "forks": 18,
+      "open_issues_count": 0,
+      "language": "TypeScript",
+      "license": "MIT",
+      "topics": [
+        "ai",
+        "ai-agents",
+        "ai-scheduler",
+        "background-jobs",
+        "bullmq-alternative",
+        "bun",
+        "bun-queue",
+        "cron-scheduler",
+        "deno",
+        "job-queue",
+        "message-queue",
+        "nodejs",
+        "postgres",
+        "postgresql",
+        "queue",
+        "redis-alternative",
+        "s3",
+        "sqlite3",
+        "task-queue-typescript"
+      ],
+      "created_at": "2026-01-28T21:26:22Z",
+      "pushed_at": "2026-10-27T19:26:04Z",
+      "archived": false,
+      "inactive_days": 0,
+      "star_velocity_per_month": 65.07,
+      "classification": "active_incumbent",
+      "graveyard_reason": "",
+      "detected_configs": [
+        {
+          "config_file": "bun.lock",
+          "tool": "Bun (bun.lock)",
+          "category": "dependency-lock"
+        },
+        {
+          "config_file": "Dockerfile",
+          "tool": "Docker (Dockerfile)",
+          "category": "container-runtime"
+        },
+        {
+          "config_file": "docker-compose.yml",
+          "tool": "Docker Compose (docker-compose.yml)",
+          "category": "orchestration-deploy"
+        },
+        {
+          "config_file": ".github/workflows",
+          "tool": "GitHub Actions",
+          "category": "ci-cd-quality"
+        }
+      ],
+      "matched_query": "topic:cron-scheduler"
+    },
+    {
+      "full_name": "zizq-labs/zizq",
+      "html_url": "https://github.com/zizq-labs/zizq",
+      "description": "Powerful single binary, zero-dependency job queue server",
+      "stars": 30,
+      "forks": 0,
+      "open_issues_count": 12,
+      "language": "Rust",
+      "license": "Unspecified",
+      "topics": [
+        "background-jobs",
+        "background-worker",
+        "background-workers",
+        "cron",
+        "cron-scheduler",
+        "distributed-cron",
+        "durable",
+        "job-queue",
+        "mpmc",
+        "mpmc-queues",
+        "performance",
+        "queue",
+        "queue-workers",
+        "queues",
+        "rust",
+        "static-binary"
+      ],
+      "created_at": "2026-03-07T22:57:54Z",
+      "pushed_at": "2026-10-27T01:02:33Z",
+      "archived": false,
+      "inactive_days": 1,
+      "star_velocity_per_month": 3.85,
+      "classification": "active_incumbent",
+      "graveyard_reason": "",
+      "detected_configs": [
+        {
+          "config_file": "Cargo.lock",
+          "tool": "Cargo (Cargo.lock)",
+          "category": "dependency-lock"
+        },
+        {
+          "config_file": "Dockerfile",
+          "tool": "Docker (Dockerfile)",
+          "category": "container-runtime"
+        },
+        {
+          "config_file": ".github/workflows",
+          "tool": "GitHub Actions",
+          "category": "ci-cd-quality"
+        }
+      ],
+      "matched_query": "topic:cron-scheduler"
+    },
+    {
+      "full_name": "alphaparkinc/genpark-autonomous-cron-schedule-conflict-and-deadlock-detector-skill",
+      "html_url": "https://github.com/alphaparkinc/genpark-autonomous-cron-schedule-conflict-and-deadlock-detector-skill",
+      "description": "Detects overlapping execution windows and shared resource lock contention across scheduled autonomous agent jobs | GenPark: https://www.genpark.ai | LinkedIn: https://www.llinkedin.com/company/92955550",
+      "stars": 7,
+      "forks": 0,
+      "open_issues_count": 0,
+      "language": "Python",
+      "license": "Unspecified",
+      "topics": [
+        "agent-skills",
+        "background-automation",
+        "concurrency-safety",
+        "cron-scheduler",
+        "deadlock-detector",
+        "job-orchestration",
+        "mcp",
+        "python-standard-library",
+        "resource-contention",
+        "schedule-validator",
+        "workflow-scheduler"
+      ],
+      "created_at": "2026-10-12T09:52:55Z",
+      "pushed_at": "2026-10-12T09:53:14Z",
+      "archived": false,
+      "inactive_days": 15,
+      "star_velocity_per_month": 7.0,
+      "classification": "active_incumbent",
+      "graveyard_reason": "",
+      "detected_configs": [],
+      "matched_query": "topic:cron-scheduler"
+    },
+    {
+      "full_name": "Alpha-Park/genpark-autonomous-cron-schedule-conflict-and-deadlock-detector-skill",
+      "html_url": "https://github.com/Alpha-Park/genpark-autonomous-cron-schedule-conflict-and-deadlock-detector-skill",
+      "description": "Detects overlapping execution windows and shared resource lock contention across scheduled autonomous agent jobs | GenPark: https://www.genpark.ai | LinkedIn: https://www.llinkedin.com/company/92955550",
+      "stars": 7,
+      "forks": 0,
+      "open_issues_count": 0,
+      "language": "Python",
+      "license": "Unspecified",
+      "topics": [
+        "agent-skills",
+        "background-automation",
+        "concurrency-safety",
+        "cron-scheduler",
+        "deadlock-detector",
+        "job-orchestration",
+        "mcp",
+        "python-standard-library",
+        "resource-contention",
+        "schedule-validator",
+        "workflow-scheduler"
+      ],
+      "created_at": "2026-10-12T09:53:26Z",
+      "pushed_at": "2026-10-12T09:53:47Z",
+      "archived": false,
+      "inactive_days": 15,
+      "star_velocity_per_month": 7.0,
+      "classification": "active_incumbent",
+      "graveyard_reason": "",
+      "detected_configs": [],
+      "matched_query": "topic:cron-scheduler"
+    },
+    {
+      "full_name": "zizq-labs/zizq-ruby",
+      "html_url": "https://github.com/zizq-labs/zizq-ruby",
+      "description": "Official Ruby Client for the Zizq Job Queue",
+      "stars": 3,
+      "forks": 0,
+      "open_issues_count": 0,
+      "language": "Ruby",
+      "license": "MIT",
+      "topics": [
+        "active-job",
+        "background-jobs",
+        "background-worker",
+        "cron",
+        "cron-scheduler",
+        "distributed-cron",
+        "job-queue",
+        "job-scheduler",
+        "job-scheduling",
+        "queue",
+        "queue-manager",
+        "queue-workers",
+        "queues",
+        "ruby",
+        "worker-pool"
+      ],
+      "created_at": "2026-03-22T23:10:37Z",
+      "pushed_at": "2026-10-27T03:24:20Z",
+      "archived": false,
+      "inactive_days": 1,
+      "star_velocity_per_month": 0.41,
+      "classification": "active_incumbent",
+      "graveyard_reason": "",
+      "detected_configs": [],
+      "matched_query": "topic:cron-scheduler"
+    },
+    {
+      "full_name": "JRs-Master/firebat",
+      "html_url": "https://github.com/JRs-Master/firebat",
+      "description": "firebat",
+      "stars": 3,
+      "forks": 2,
+      "open_issues_count": 0,
+      "language": "Rust",
+      "license": "AGPL-3.0",
+      "topics": [
+        "agentic-ai",
+        "ai-platform",
+        "automation",
+        "claude",
+        "cron-scheduler",
+        "function-calling",
+        "gemini",
+        "hexagonal-architecture",
+        "korean",
+        "llm",
+        "low-code",
+        "mcp",
+        "model-context-protocol",
+        "multi-provider-llm",
+        "nextjs",
+        "openai",
+        "sandbox",
+        "self-hosted",
+        "typescript",
+        "workspace"
+      ],
+      "created_at": "2026-04-09T02:36:22Z",
+      "pushed_at": "2026-10-03T00:29:26Z",
+      "archived": false,
+      "inactive_days": 25,
+      "star_velocity_per_month": 0.45,
+      "classification": "active_incumbent",
+      "graveyard_reason": "",
+      "detected_configs": [],
+      "matched_query": "topic:cron-scheduler"
+    },
+    {
+      "full_name": "JSLEEKR/dagrun",
+      "html_url": "https://github.com/JSLEEKR/dagrun",
+      "description": "Re-implementation of dagu in Go \u2014 lightweight DAG workflow runner with zero deps",
+      "stars": 1,
+      "forks": 0,
+      "open_issues_count": 0,
+      "language": "Go",
+      "license": "Unspecified",
+      "topics": [
+        "automation",
+        "cli",
+        "dag",
+        "go",
+        "golang",
+        "mit-license",
+        "orchestration",
+        "parallel-execution",
+        "pipeline",
+        "reimplementation",
+        "task-runner",
+        "workflow",
+        "yaml",
+        "zero-dependencies"
+      ],
+      "created_at": "2026-03-29T14:45:07Z",
+      "pushed_at": "2026-03-30T06:46:00Z",
+      "archived": false,
+      "inactive_days": 212,
+      "star_velocity_per_month": 0.14,
+      "classification": "active_incumbent",
+      "graveyard_reason": "",
+      "detected_configs": [],
+      "matched_query": "dagu language:go"
+    },
+    {
+      "full_name": "kmlebedev/clickhouse-import-rosstat",
+      "html_url": "https://github.com/kmlebedev/clickhouse-import-rosstat",
+      "description": "Go-ETL \u0440\u043e\u0441\u0441\u0438\u0439\u0441\u043a\u043e\u0439 \u043c\u0430\u043a\u0440\u043e\u0441\u0442\u0430\u0442\u0438\u0441\u0442\u0438\u043a\u0438 \u0438 \u0444\u0438\u043d\u0430\u043d\u0441\u043e\u0432\u044b\u0445 \u0434\u0430\u043d\u043d\u044b\u0445 \u0432 ClickHouse: \u0426\u0411, \u0420\u043e\u0441\u0441\u0442\u0430\u0442, \u041c\u0438\u043d\u0444\u0438\u043d, \u0424\u0422\u0421, \u0424\u0410\u041e, FRED/BLS/BEA/EIA, MOEX, \u0437\u043e\u043b\u043e\u0442\u044b\u0435 ETF, \u043e\u0442\u0447\u0451\u0442\u043d\u043e\u0441\u0442\u0438 \u0431\u0430\u043d\u043a\u043e\u0432 \u0438 \u043d\u043e\u0432\u043e\u0441\u0442\u0438. \u0414\u0430\u0448\u0431\u043e\u0440\u0434\u044b Grafana \u043a\u0430\u043a \u043a\u043e\u0434, \u0432\u0438\u0442\u0440\u0438\u043d\u044b \u0434\u043b\u044f MCP, \u043c\u043e\u0434\u0435\u043b\u0438 \u0437\u043e\u043b\u043e\u0442\u043e \u2192 DCF \u2192 NAV, \u0440\u0430\u0441\u043f\u0438\u0441\u0430\u043d\u0438\u044f Dagu, \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442\u0430\u0446\u0438\u044f \u043d\u0430 GitHub Pages.",
+      "stars": 1,
+      "forks": 0,
+      "open_issues_count": 95,
+      "language": "Go",
+      "license": "MIT",
+      "topics": [],
+      "created_at": "2024-09-05T19:26:48Z",
+      "pushed_at": "2026-10-27T19:21:34Z",
+      "archived": false,
+      "inactive_days": 0,
+      "star_velocity_per_month": 0.04,
+      "classification": "active_incumbent",
+      "graveyard_reason": "",
+      "detected_configs": [],
+      "matched_query": "dagu language:go"
+    },
+    {
+      "full_name": "bachiep/phan-tan-dkron-giuaky",
+      "html_url": "https://github.com/bachiep/phan-tan-dkron-giuaky",
+      "description": "",
+      "stars": 1,
+      "forks": 0,
+      "open_issues_count": 0,
+      "language": "Go",
+      "license": "Unspecified",
+      "topics": [],
+      "created_at": "2026-05-28T14:15:37Z",
+      "pushed_at": "2026-06-03T09:13:05Z",
+      "archived": false,
+      "inactive_days": 147,
+      "star_velocity_per_month": 0.2,
+      "classification": "active_incumbent",
+      "graveyard_reason": "",
+      "detected_configs": [],
+      "matched_query": "dkron language:go"
+    }
+  ],
+  "graveyard_repos": [
+    {
+      "full_name": "shunfei/cronsun",
+      "html_url": "https://github.com/shunfei/cronsun",
+      "description": "A Distributed, Fault-Tolerant Cron-Style Job System.",
+      "stars": 2908,
+      "forks": 455,
+      "open_issues_count": 87,
+      "language": "Go",
+      "license": "Apache-2.0",
+      "topics": [
+        "cron",
+        "crontab",
+        "fault-tolerance",
+        "go",
+        "golang",
+        "job-scheduler"
+      ],
+      "created_at": "2017-05-09T07:24:57Z",
+      "pushed_at": "2024-06-06T06:17:43Z",
+      "archived": false,
+      "inactive_days": 874,
+      "star_velocity_per_month": 25.22,
+      "classification": "graveyard",
+      "graveyard_reason": "Dormant heuristic: no pushes in 874 days (>365d threshold; inactivity signal only \u2014 verify via issues/commits before attributing cause)",
+      "detected_configs": [],
+      "matched_query": "distributed cron language:go"
+    },
+    {
+      "full_name": "wj596/gojob",
+      "html_url": "https://github.com/wj596/gojob",
+      "description": "Distributed Job Schedule Platform With Goalng\u3001Raft And Cron   (\u5206\u5e03\u5f0f\u4efb\u52a1\u8c03\u5ea6\u5e73\u53f0\uff0c\u6838\u5fc3\u7406\u5ff5\uff1a\u6613\u90e8\u7f72\u3001\u9ad8\u53ef\u7528\u3001\u8de8\u5e73\u53f0\u3001\u5f02\u6b65\u5e76\u884c\u3001\u5f39\u6027\u4f38\u7f29\u3001\u5fae\u670d\u52a1)",
+      "stars": 127,
+      "forks": 26,
+      "open_issues_count": 33,
+      "language": "Go",
+      "license": "Apache-2.0",
+      "topics": [],
+      "created_at": "2020-01-16T07:09:16Z",
+      "pushed_at": "2023-01-05T05:19:42Z",
+      "archived": false,
+      "inactive_days": 1392,
+      "star_velocity_per_month": 1.54,
+      "classification": "graveyard",
+      "graveyard_reason": "Dormant heuristic: no pushes in 1392 days (>365d threshold; inactivity signal only \u2014 verify via issues/commits before attributing cause)",
+      "detected_configs": [],
+      "matched_query": "distributed cron language:go"
+    },
+    {
+      "full_name": "tmnhs/Crony",
+      "html_url": "https://github.com/tmnhs/Crony",
+      "description": "Distributed scheduled task management platform Go\u8bed\u8a00\u5b9e\u73b0\u7684\u5206\u5e03\u5f0f\u5b9a\u65f6\u4efb\u52a1\u7ba1\u7406\u5e73\u53f0\uff0c\u652f\u6301\u591a\u8282\u70b9\u90e8\u7f72\uff0c\u652f\u6301\u8282\u70b9\u4efb\u52a1\u81ea\u52a8\u5206\u914d\u548c\u6545\u969c\u8f6c\u79fb",
+      "stars": 109,
+      "forks": 27,
+      "open_issues_count": 2,
+      "language": "Go",
+      "license": "MIT",
+      "topics": [
+        "cron",
+        "crontab",
+        "distributed",
+        "etcd",
+        "failover",
+        "gin",
+        "goland",
+        "gorm",
+        "mysql",
+        "task-management",
+        "vue"
+      ],
+      "created_at": "2022-09-22T09:17:38Z",
+      "pushed_at": "2023-06-03T11:23:00Z",
+      "archived": false,
+      "inactive_days": 1242,
+      "star_velocity_per_month": 2.18,
+      "classification": "graveyard",
+      "graveyard_reason": "Dormant heuristic: no pushes in 1242 days (>365d threshold; inactivity signal only \u2014 verify via issues/commits before attributing cause)",
+      "detected_configs": [],
+      "matched_query": "distributed cron language:go"
+    },
+    {
+      "full_name": "hanagantig/cron",
+      "html_url": "https://github.com/hanagantig/cron",
+      "description": "Cron library for go with distributed lock",
+      "stars": 49,
+      "forks": 0,
+      "open_issues_count": 3,
+      "language": "Go",
+      "license": "MIT",
+      "topics": [
+        "cron",
+        "distributed-lock",
+        "go",
+        "go-cron",
+        "go-crontab",
+        "go-tools",
+        "golang",
+        "microservice",
+        "redis-lock",
+        "schedule",
+        "scheduler"
+      ],
+      "created_at": "2021-06-12T11:36:42Z",
+      "pushed_at": "2022-01-10T11:18:36Z",
+      "archived": false,
+      "inactive_days": 1751,
+      "star_velocity_per_month": 0.75,
+      "classification": "graveyard",
+      "graveyard_reason": "Dormant heuristic: no pushes in 1751 days (>365d threshold; inactivity signal only \u2014 verify via issues/commits before attributing cause)",
+      "detected_configs": [],
+      "matched_query": "distributed cron language:go"
+    },
+    {
+      "full_name": "imiskolee/litecron",
+      "html_url": "https://github.com/imiskolee/litecron",
+      "description": "a distributed cron job processor written by golang",
+      "stars": 45,
+      "forks": 5,
+      "open_issues_count": 0,
+      "language": "Go",
+      "license": "MIT",
+      "topics": [],
+      "created_at": "2018-03-29T10:11:42Z",
+      "pushed_at": "2018-03-31T07:00:51Z",
+      "archived": false,
+      "inactive_days": 3133,
+      "star_velocity_per_month": 0.43,
+      "classification": "graveyard",
+      "graveyard_reason": "Dormant heuristic: no pushes in 3133 days (>365d threshold; inactivity signal only \u2014 verify via issues/commits before attributing cause)",
+      "detected_configs": [],
+      "matched_query": "distributed cron language:go"
+    },
+    {
+      "full_name": "huajiao-tv/peppercron",
+      "html_url": "https://github.com/huajiao-tv/peppercron",
+      "description": "PepperCron is a distributed cron job management system",
+      "stars": 34,
+      "forks": 9,
+      "open_issues_count": 2,
+      "language": "Go",
+      "license": "MIT",
+      "topics": [
+        "cronjob",
+        "go",
+        "golang"
+      ],
+      "created_at": "2019-12-25T09:31:24Z",
+      "pushed_at": "2023-02-03T07:25:30Z",
+      "archived": false,
+      "inactive_days": 1363,
+      "star_velocity_per_month": 0.41,
+      "classification": "graveyard",
+      "graveyard_reason": "Dormant heuristic: no pushes in 1363 days (>365d threshold; inactivity signal only \u2014 verify via issues/commits before attributing cause)",
+      "detected_configs": [],
+      "matched_query": "distributed cron language:go"
+    },
+    {
+      "full_name": "funkol2007/distributed_crontab",
+      "html_url": "https://github.com/funkol2007/distributed_crontab",
+      "description": "\u5206\u5e03\u5f0fcrontab\u5b9e\u8df5",
+      "stars": 33,
+      "forks": 12,
+      "open_issues_count": 0,
+      "language": "Go",
+      "license": "Unspecified",
+      "topics": [],
+      "created_at": "2019-04-03T06:34:14Z",
+      "pushed_at": "2019-04-08T03:39:13Z",
+      "archived": false,
+      "inactive_days": 2760,
+      "star_velocity_per_month": 0.36,
+      "classification": "graveyard",
+      "graveyard_reason": "Dormant heuristic: no pushes in 2760 days (>365d threshold; inactivity signal only \u2014 verify via issues/commits before attributing cause)",
+      "detected_configs": [],
+      "matched_query": "distributed cron language:go"
+    },
+    {
+      "full_name": "Scalingo/go-etcd-cron",
+      "html_url": "https://github.com/Scalingo/go-etcd-cron",
+      "description": "Library to run a distributed cron-like task scheduler",
+      "stars": 32,
+      "forks": 5,
+      "open_issues_count": 0,
+      "language": "Go",
+      "license": "MIT",
+      "topics": [],
+      "created_at": "2017-10-25T10:22:18Z",
+      "pushed_at": "2026-02-03T09:05:30Z",
+      "archived": true,
+      "inactive_days": 267,
+      "star_velocity_per_month": 0.29,
+      "classification": "graveyard",
+      "graveyard_reason": "Explicitly archived by maintainer",
+      "detected_configs": [],
+      "matched_query": "distributed cron language:go"
+    },
+    {
+      "full_name": "saasify-sh/simple-cron",
+      "html_url": "https://github.com/saasify-sh/simple-cron",
+      "description": "Dead simple cron service for making HTTP calls on a regular schedule.",
+      "stars": 14,
+      "forks": 3,
+      "open_issues_count": 0,
+      "language": "TypeScript",
+      "license": "Unspecified",
+      "topics": [
+        "cron",
+        "cron-jobs",
+        "cron-scheduler",
+        "easycron",
+        "gcp",
+        "google-cloud-firestore",
+        "google-cloud-scheduler",
+        "openapi",
+        "saasify"
+      ],
+      "created_at": "2020-03-07T18:50:29Z",
+      "pushed_at": "2020-07-11T23:25:15Z",
+      "archived": true,
+      "inactive_days": 2299,
+      "star_velocity_per_month": 0.17,
+      "classification": "graveyard",
+      "graveyard_reason": "Explicitly archived by maintainer",
+      "detected_configs": [],
+      "matched_query": "topic:cron-scheduler"
+    },
+    {
+      "full_name": "bozerkins/terraform-provider-dkron",
+      "html_url": "https://github.com/bozerkins/terraform-provider-dkron",
+      "description": "Terrform Provider for Managing Dkron Jobs",
+      "stars": 12,
+      "forks": 3,
+      "open_issues_count": 0,
+      "language": "Go",
+      "license": "MIT",
+      "topics": [],
+      "created_at": "2021-11-04T10:48:15Z",
+      "pushed_at": "2024-05-09T04:16:03Z",
+      "archived": false,
+      "inactive_days": 902,
+      "star_velocity_per_month": 0.2,
+      "classification": "graveyard",
+      "graveyard_reason": "Dormant heuristic: no pushes in 902 days (>365d threshold; inactivity signal only \u2014 verify via issues/commits before attributing cause)",
+      "detected_configs": [],
+      "matched_query": "dkron language:go"
+    },
+    {
+      "full_name": "bringg/dkron-executor-rabbitmq",
+      "html_url": "https://github.com/bringg/dkron-executor-rabbitmq",
+      "description": "RabbitMQ Executor for dkron.io",
+      "stars": 8,
+      "forks": 2,
+      "open_issues_count": 0,
+      "language": "Go",
+      "license": "MIT",
+      "topics": [
+        "dkron",
+        "dkron-executor-rabbitmq",
+        "rabbitmq"
+      ],
+      "created_at": "2018-05-08T20:16:57Z",
+      "pushed_at": "2018-10-07T20:30:50Z",
+      "archived": true,
+      "inactive_days": 2942,
+      "star_velocity_per_month": 0.08,
+      "classification": "graveyard",
+      "graveyard_reason": "Explicitly archived by maintainer",
+      "detected_configs": [],
+      "matched_query": "dkron language:go"
+    },
+    {
+      "full_name": "tswanepoel/crongadgetry",
+      "html_url": "https://github.com/tswanepoel/crongadgetry",
+      "description": "Simple CRON string parsing and enumeration",
+      "stars": 7,
+      "forks": 2,
+      "open_issues_count": 0,
+      "language": "C#",
+      "license": "MIT",
+      "topics": [
+        "cron-parser",
+        "cron-scheduler"
+      ],
+      "created_at": "2015-01-09T11:20:54Z",
+      "pushed_at": "2015-03-30T19:22:13Z",
+      "archived": false,
+      "inactive_days": 4229,
+      "star_velocity_per_month": 0.05,
+      "classification": "graveyard",
+      "graveyard_reason": "Dormant heuristic: no pushes in 4229 days (>365d threshold; inactivity signal only \u2014 verify via issues/commits before attributing cause)",
+      "detected_configs": [],
+      "matched_query": "topic:cron-scheduler"
+    },
+    {
+      "full_name": "eunomie/dague",
+      "html_url": "https://github.com/eunomie/dague",
+      "description": "Opinionated Go toolchain as Docker CLI plugin",
+      "stars": 6,
+      "forks": 0,
+      "open_issues_count": 0,
+      "language": "Go",
+      "license": "MIT",
+      "topics": [
+        "dagger",
+        "docker",
+        "golang"
+      ],
+      "created_at": "2022-11-05T12:36:29Z",
+      "pushed_at": "2023-01-09T08:48:53Z",
+      "archived": false,
+      "inactive_days": 1388,
+      "star_velocity_per_month": 0.12,
+      "classification": "graveyard",
+      "graveyard_reason": "Dormant heuristic: no pushes in 1388 days (>365d threshold; inactivity signal only \u2014 verify via issues/commits before attributing cause)",
+      "detected_configs": [],
+      "matched_query": "dagu language:go"
+    },
+    {
+      "full_name": "lintang-b-s/distributed-video-transcoder",
+      "html_url": "https://github.com/lintang-b-s/distributed-video-transcoder",
+      "description": "simple distributed video transcoder for your  video streaming services. built using golang, dkron, ffmpeg & bento4 (mpeg-dash protocol), minio, rabbitmq, mongodb & can be deployed on Kubernetes cluster",
+      "stars": 2,
+      "forks": 0,
+      "open_issues_count": 0,
+      "language": "Go",
+      "license": "Unspecified",
+      "topics": [],
+      "created_at": "2024-05-11T20:40:28Z",
+      "pushed_at": "2024-05-13T05:49:50Z",
+      "archived": false,
+      "inactive_days": 898,
+      "star_velocity_per_month": 0.07,
+      "classification": "graveyard",
+      "graveyard_reason": "Dormant heuristic: no pushes in 898 days (>365d threshold; inactivity signal only \u2014 verify via issues/commits before attributing cause)",
+      "detected_configs": [],
+      "matched_query": "dkron language:go"
+    },
+    {
+      "full_name": "0xDing/daguerreFlag",
+      "html_url": "https://github.com/0xDing/daguerreFlag",
+      "description": "Simple reverse proxy to serve images.",
+      "stars": 1,
+      "forks": 1,
+      "open_issues_count": 0,
+      "language": "Go",
+      "license": "Apache-2.0",
+      "topics": [],
+      "created_at": "2018-04-25T17:59:29Z",
+      "pushed_at": "2018-05-09T17:16:52Z",
+      "archived": false,
+      "inactive_days": 3093,
+      "star_velocity_per_month": 0.01,
+      "classification": "graveyard",
+      "graveyard_reason": "Dormant heuristic: no pushes in 3093 days (>365d threshold; inactivity signal only \u2014 verify via issues/commits before attributing cause)",
+      "detected_configs": [],
+      "matched_query": "dagu language:go"
+    },
+    {
+      "full_name": "MGSousa/dKsync",
+      "html_url": "https://github.com/MGSousa/dKsync",
+      "description": "Provides tools for import / export cron jobs from dKron",
+      "stars": 1,
+      "forks": 0,
+      "open_issues_count": 0,
+      "language": "Go",
+      "license": "Unspecified",
+      "topics": [],
+      "created_at": "2021-01-22T13:00:16Z",
+      "pushed_at": "2021-01-22T15:00:57Z",
+      "archived": false,
+      "inactive_days": 2104,
+      "star_velocity_per_month": 0.01,
+      "classification": "graveyard",
+      "graveyard_reason": "Dormant heuristic: no pushes in 2104 days (>365d threshold; inactivity signal only \u2014 verify via issues/commits before attributing cause)",
+      "detected_configs": [],
+      "matched_query": "dkron language:go"
+    },
+    {
+      "full_name": "functional-software/terraform-provider-dkron",
+      "html_url": "https://github.com/functional-software/terraform-provider-dkron",
+      "description": "terraform-provider-dkron",
+      "stars": 0,
+      "forks": 2,
+      "open_issues_count": 0,
+      "language": "Go",
+      "license": "Apache-2.0",
+      "topics": [],
+      "created_at": "2019-07-19T22:23:24Z",
+      "pushed_at": "2019-05-09T07:59:29Z",
+      "archived": false,
+      "inactive_days": 2729,
+      "star_velocity_per_month": 0.0,
+      "classification": "graveyard",
+      "graveyard_reason": "Dormant heuristic: no pushes in 2729 days (>365d threshold; inactivity signal only \u2014 verify via issues/commits before attributing cause)",
+      "detected_configs": [],
+      "matched_query": "dkron language:go"
+    }
+  ],
+  "oss_building_blocks": [
+    {
+      "full_name": "modernc-org/sqlite",
+      "html_url": "https://github.com/modernc-org/sqlite",
+      "description": "Pure-Go SQLite, no cgo. Official mirror of gitlab.com/cznic/sqlite \u2014 issues and PRs welcome here.",
+      "stars": 117,
+      "forks": 21,
+      "open_issues_count": 1,
+      "language": "Go",
+      "license": "BSD-3-Clause",
+      "topics": [
+        "cgo-free",
+        "database",
+        "go",
+        "pure-go",
+        "sql",
+        "sqlite"
+      ],
+      "created_at": "2025-12-01T10:40:15Z",
+      "pushed_at": "2026-10-26T19:45:11Z",
+      "archived": false,
+      "inactive_days": 1,
+      "star_velocity_per_month": 10.64,
+      "classification": "oss_building_block",
+      "graveyard_reason": "",
+      "detected_configs": [],
+      "matched_query": "modernc.org/sqlite"
+    },
+    {
+      "full_name": "flc1125/go-cron",
+      "html_url": "https://github.com/flc1125/go-cron",
+      "description": "The cron library is a cron job library for Go. It is a fork of robfig/cron with some improvements.",
+      "stars": 24,
+      "forks": 2,
+      "open_issues_count": 5,
+      "language": "Go",
+      "license": "MIT",
+      "topics": [
+        "cron",
+        "crontab",
+        "distributed",
+        "go",
+        "golang",
+        "library",
+        "open-telemetry",
+        "robfig-cron"
+      ],
+      "created_at": "2024-10-26T08:20:51Z",
+      "pushed_at": "2026-10-27T22:49:16Z",
+      "archived": false,
+      "inactive_days": 0,
+      "star_velocity_per_month": 0.98,
+      "classification": "oss_building_block",
+      "graveyard_reason": "",
+      "detected_configs": [],
+      "matched_query": "robfig/cron"
+    },
+    {
+      "full_name": "julen8/sqlite",
+      "html_url": "https://github.com/julen8/sqlite",
+      "description": "gorm sqlite driver(using modernc.org/sqlite)",
+      "stars": 1,
+      "forks": 1,
+      "open_issues_count": 5,
+      "language": "Go",
+      "license": "MIT",
+      "topics": [],
+      "created_at": "2021-11-30T06:11:46Z",
+      "pushed_at": "2026-02-09T17:38:14Z",
+      "archived": false,
+      "inactive_days": 260,
+      "star_velocity_per_month": 0.02,
+      "classification": "oss_building_block",
+      "graveyard_reason": "",
+      "detected_configs": [],
+      "matched_query": "modernc.org/sqlite"
+    }
+  ],
+  "observed_stack_configs": [
+    {
+      "tool": "Go Modules (go.sum)",
+      "category": "dependency-lock",
+      "config_file": "go.sum",
+      "repos": [
+        "dkron-io/dkron",
+        "dagucloud/dagu"
+      ]
+    },
+    {
+      "tool": "Docker (Dockerfile)",
+      "category": "container-runtime",
+      "config_file": "Dockerfile",
+      "repos": [
+        "dkron-io/dkron",
+        "dagucloud/dagu",
+        "egeominotti/bunqueue",
+        "zizq-labs/zizq"
+      ]
+    },
+    {
+      "tool": "Docker Compose (docker-compose.yml)",
+      "category": "orchestration-deploy",
+      "config_file": "docker-compose.yml",
+      "repos": [
+        "dkron-io/dkron",
+        "egeominotti/bunqueue"
+      ]
+    },
+    {
+      "tool": "GitHub Actions",
+      "category": "ci-cd-quality",
+      "config_file": ".github/workflows",
+      "repos": [
+        "dkron-io/dkron",
+        "dagucloud/dagu",
+        "egeominotti/bunqueue",
+        "zizq-labs/zizq"
+      ]
+    },
+    {
+      "tool": "Make (Makefile)",
+      "category": "ci-cd-quality",
+      "config_file": "Makefile",
+      "repos": [
+        "dkron-io/dkron",
+        "dagucloud/dagu"
+      ]
+    },
+    {
+      "tool": "Dev Containers (.devcontainer)",
+      "category": "container-runtime",
+      "config_file": ".devcontainer",
+      "repos": [
+        "dagucloud/dagu"
+      ]
+    },
+    {
+      "tool": "Bun (bun.lock)",
+      "category": "dependency-lock",
+      "config_file": "bun.lock",
+      "repos": [
+        "egeominotti/bunqueue"
+      ]
+    },
+    {
+      "tool": "Cargo (Cargo.lock)",
+      "category": "dependency-lock",
+      "config_file": "Cargo.lock",
+      "repos": [
+        "zizq-labs/zizq"
+      ]
+    }
+  ],
+  "pain_points": [
+    {
+      "repo_full_name": "dagucloud/dagu",
+      "issue_number": 2806,
+      "title": "bug: SFTP does not inherit DAG-level SSH configuration and ${params.*} is not resolved in ssh.host",
+      "issue_url": "https://github.com/dagucloud/dagu/issues/2806",
+      "category": "bug_or_failure",
+      "labels": [
+        "bug"
+      ],
+      "reactions_plus_one": 1,
+      "reactions_total": 1,
+      "comments_count": 0,
+      "body_excerpt": "## Dagu version 2.16.0 ## Summary I found two inconsistencies between the current documentation and the actual behavior. ### Issue 1: sftp.upload does not inherit DAG-level SSH configuration According to the documentation, SFTP steps should inherit configuration from the DAG-leve...",
+      "top_comments": [],
+      "created_at": "2026-09-18T11:20:34Z"
+    },
+    {
+      "repo_full_name": "dkron-io/dkron",
+      "issue_number": 1001,
+      "title": "No way to recover cluster without deleting raft data. Older pod IPs are getting used on multipler server failure",
+      "issue_url": "https://github.com/dkron-io/dkron/issues/1001",
+      "category": "top_voted",
+      "labels": [
+        "triage"
+      ],
+      "reactions_plus_one": 5,
+      "reactions_total": 5,
+      "comments_count": 11,
+      "body_excerpt": "**Describe the bug** I am running dkron cluster of 3 nodes. I restarted on pod and in this case cluster is working fine and new pod(which I have restared) with new ip successfully joined the cluster. then I restarted 2 nodes and this time cluster is down, even after restarting th...",
+      "top_comments": [
+        {
+          "author": "omer2500",
+          "reactions": 1,
+          "excerpt": "@vcastellm any news about this issue? we are still experiencing this issue was it fixed in later version of dkron? we are running version 3.2.1"
+        },
+        {
+          "author": "rmuehlbauer",
+          "reactions": 0,
+          "excerpt": "I have the same or at least an very similar issue: after all dkron nodes/servers were down simultaneously I'm not able to get the cluster back working again - leader election never succeeds. **What I have** I've setuped a kubernetes statefu..."
+        }
+      ],
+      "created_at": "2021-07-02T09:41:14Z"
+    },
+    {
+      "repo_full_name": "dkron-io/dkron",
+      "issue_number": 712,
+      "title": "Webhook execution only on failure",
+      "issue_url": "https://github.com/dkron-io/dkron/issues/712",
+      "category": "top_voted",
+      "labels": [
+        "enhancement"
+      ],
+      "reactions_plus_one": 5,
+      "reactions_total": 5,
+      "comments_count": 2,
+      "body_excerpt": "I am using the current web hook support for receiving a message for my completed jobs via a Telegram bot. Unfortunately I have daily jobs running that mostly succeed and it is a bit overwhelming receiving a message for each of these. It would be great if you could configure, per ...",
+      "top_comments": [
+        {
+          "author": "vcastellm",
+          "reactions": 0,
+          "excerpt": "Makes sense, thanks @savvasdalkitsis for the suggestion."
+        },
+        {
+          "author": "vcastellm",
+          "reactions": 0,
+          "excerpt": "As a side note, the webhook notification would be better moved to a Processor plugin with such option. Like in https://dkron.io/pro/processors/slack/"
+        }
+      ],
+      "created_at": "2020-03-25T21:01:07Z"
+    },
+    {
+      "repo_full_name": "dagucloud/dagu",
+      "issue_number": 1260,
+      "title": "Worker Sync Mode for Remote Storage",
+      "issue_url": "https://github.com/dagucloud/dagu/issues/1260",
+      "category": "top_voted",
+      "labels": [],
+      "reactions_plus_one": 4,
+      "reactions_total": 8,
+      "comments_count": 5,
+      "body_excerpt": "Currently a distributed DAG run only succeeds when workers, coordinators, schedulers, and the UI server share the same filesystem tree. A worker polled by `internal/worker` ultimately shells out to `dagu start`, whose `internal/agent` writes attempt metadata through the file-back...",
+      "top_comments": [
+        {
+          "author": "ghansham",
+          "reactions": 2,
+          "excerpt": "This feature is going to be a game changer. It is time that we should start using web sockets for master worker coordination for faster response and lower network overhead. May be at some point of time, we may do away with the polling part."
+        },
+        {
+          "author": "kriyanshii",
+          "reactions": 1,
+          "excerpt": "Would love to work on this"
+        }
+      ],
+      "created_at": "2025-09-17T15:44:57Z"
+    },
+    {
+      "repo_full_name": "dagucloud/dagu",
+      "issue_number": 1016,
+      "title": "feat: Support for operators to enhance pre conditions",
+      "issue_url": "https://github.com/dagucloud/dagu/issues/1016",
+      "category": "top_voted",
+      "labels": [],
+      "reactions_plus_one": 2,
+      "reactions_total": 2,
+      "comments_count": 6,
+      "body_excerpt": "Right now pre conditions provide use of commands, variables but not operators like and, or, not, contains, etc. We propose preconditions enhancements to include above. This has been discussed by @yottahmd in detail: https://github.com/dagu-org/dagu/issues/598 @kriyanshii has work...",
+      "top_comments": [
+        {
+          "author": "ghansham",
+          "reactions": 2,
+          "excerpt": "Thanks for giving the details. May be in the elementary condition also we can support optional operators like eq, ne, in, notin (default case being eq) E.g. ```yaml - condition: \"${STATUS}\" operator: \"eq\" expected: \"STARTING\" - condition: \"..."
+        },
+        {
+          "author": "ghansham",
+          "reactions": 2,
+          "excerpt": "Good idea. We can go ahead with this. Other than key=value also consider: ``` \"key != value\" \"key in [list]\" \"key not in [list]\" ```"
+        }
+      ],
+      "created_at": "2025-06-15T10:10:01Z"
+    },
+    {
+      "repo_full_name": "dkron-io/dkron",
+      "issue_number": 966,
+      "title": "Limit number of parrallel jobs per node/worker",
+      "issue_url": "https://github.com/dkron-io/dkron/issues/966",
+      "category": "top_voted",
+      "labels": [
+        "enhancement"
+      ],
+      "reactions_plus_one": 2,
+      "reactions_total": 2,
+      "comments_count": 4,
+      "body_excerpt": "**In Short** It would be useful to have a parameter on the node specifying how many jobs it can process at the same time. **Situation** The point is, we have about 80 nodes and scheduled it in such a way, that at a time (with a shift of about 15 seconds between the job executions...",
+      "top_comments": [
+        {
+          "author": "LevonW-IIS",
+          "reactions": 0,
+          "excerpt": "This would be incredibly useful. Without this feature, will likely have to move to using a different task scheduler."
+        },
+        {
+          "author": "vcastellm",
+          "reactions": 0,
+          "excerpt": "Hi @LevonW-IIS, this feature is in the roadmap and some work started, but I wasn't sure if there would be enough demand for it, as of now you are the first or second one requesting it. Out of curiosity, do you know any other task scheduler ..."
+        }
+      ],
+      "created_at": "2021-05-16T10:06:22Z"
+    },
+    {
+      "repo_full_name": "dagucloud/dagu",
+      "issue_number": 1119,
+      "title": "Considering debug mode for step-by-step DAG execution - what do you think?",
+      "issue_url": "https://github.com/dagucloud/dagu/issues/1119",
+      "category": "top_voted",
+      "labels": [
+        "discussion"
+      ],
+      "reactions_plus_one": 2,
+      "reactions_total": 2,
+      "comments_count": 4,
+      "body_excerpt": "This is a proposal for adding debug capabilities to Dagu. Before we build this, we'd love to hear: - Would this solve your debugging pain points? - Which features would you use most? - What's missing from this proposal? Please feel free to share your thoughts in the comments! ###...",
+      "top_comments": [],
+      "created_at": "2025-07-22T15:41:03Z"
+    },
+    {
+      "repo_full_name": "dagucloud/dagu",
+      "issue_number": 879,
+      "title": "feat: Matrix task and DAG execution",
+      "issue_url": "https://github.com/dagucloud/dagu/issues/879",
+      "category": "top_voted",
+      "labels": [],
+      "reactions_plus_one": 2,
+      "reactions_total": 2,
+      "comments_count": 1,
+      "body_excerpt": "Proposal to implement matrix execution on both task and DAG level. Dependencies: - https://github.com/dagu-org/dagu/issues/786#issuecomment-2581684809 - #738 Reference to other implementations: - [Running variations of jobs in a workflow - GitHub Docs](https://docs.github.com/en/...",
+      "top_comments": [],
+      "created_at": "2025-03-11T07:44:18Z"
+    },
+    {
+      "repo_full_name": "dagucloud/dagu",
+      "issue_number": 695,
+      "title": "scheduler: Ability to create a DAG where it is repeatable given start date, end date and CRON",
+      "issue_url": "https://github.com/dagucloud/dagu/issues/695",
+      "category": "top_voted",
+      "labels": [
+        "wishlist"
+      ],
+      "reactions_plus_one": 2,
+      "reactions_total": 2,
+      "comments_count": 0,
+      "body_excerpt": "For example, if have I have ``` cron: 5 * * * * start_date: 2024-10-10 end_date: 2024-12-10 ``` This DAG will generate tasks that run every 5 minutes, and generate a variable (like $CRON_DATE) that can be passed to the underlying shell commands. This is useful when you have histo...",
+      "top_comments": [],
+      "created_at": "2024-11-02T13:27:55Z"
+    },
+    {
+      "repo_full_name": "dkron-io/dkron",
+      "issue_number": 1071,
+      "title": "Ability to use L and W in cron expression (i.e. last Sunday of the month)",
+      "issue_url": "https://github.com/dkron-io/dkron/issues/1071",
+      "category": "top_voted",
+      "labels": [
+        "enhancement"
+      ],
+      "reactions_plus_one": 1,
+      "reactions_total": 1,
+      "comments_count": 0,
+      "body_excerpt": "Would it be possible to add the possibility to schedule on specific days like: - First Sunday of the month - Last Friday of the Month - 2nd Monday of the month - ... There is a go implementation available [here.](https://github.com/gorhill/cronexpr) It adds **L, W and #** to the ...",
+      "top_comments": [],
+      "created_at": "2022-03-16T10:17:31Z"
+    },
+    {
+      "repo_full_name": "dkron-io/dkron",
+      "issue_number": 1076,
+      "title": "Timezone is ignored for @at schedule expressions",
+      "issue_url": "https://github.com/dkron-io/dkron/issues/1076",
+      "category": "top_voted",
+      "labels": [
+        "enhancement"
+      ],
+      "reactions_plus_one": 1,
+      "reactions_total": 1,
+      "comments_count": 0,
+      "body_excerpt": "When using `@at <datetime>` expression, timezone is set twice. The first one is set in the expression itself, the second one is set in the job field. It'd be more logical and consistent to set up timezone only once. My suggestion is: 1. `@at <datetime>` should use RFC3339 without...",
+      "top_comments": [],
+      "created_at": "2022-03-23T15:28:18Z"
+    }
+  ],
+  "warnings": []
+}

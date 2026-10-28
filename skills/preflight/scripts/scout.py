@@ -301,10 +301,24 @@ def normalize_repo_query(q: str) -> str:
     Scope free-text queries to repository name and description by default.
     GitHub's default search includes full README bodies, which frequently matches unrelated
     keyword-stuffed list repositories. Callers can still pass explicit `in:`, `topic:`, or `repo:` qualifiers.
+    If `repo:owner/name` is passed, strips `repo:` and uses `owner/name in:name` so `/search/repositories` succeeds.
     """
-    if "in:" not in q and "topic:" not in q and "repo:" not in q:
-        return f"{q} in:name,description"
-    return q
+    clean = q.strip()
+    if clean.startswith("repo:") and "/" in clean and " " not in clean:
+        owner_repo = clean.split("repo:", 1)[1]
+        return f"{owner_repo} in:name"
+    if "in:" not in clean and "topic:" not in clean and "repo:" not in clean:
+        return f"{clean} in:name,description"
+    return clean
+
+
+def normalize_topic_query(topic: str) -> str:
+    """Ensure a topic string is formatted with the GitHub `topic:` search qualifier."""
+    clean = topic.strip()
+    if clean.startswith("topic:"):
+        return clean
+    slug = clean.lower().replace(" ", "-")
+    return f"topic:{slug}"
 
 
 def is_noise_repo(raw: dict[str, Any]) -> bool:
@@ -348,7 +362,10 @@ def classify_repo(raw: dict[str, Any], ref_dt: datetime | None = None) -> dict[s
     if archived:
         graveyard_reason = "Explicitly archived by maintainer"
     elif is_graveyard:
-        graveyard_reason = f"Dormant / no pushes in {inactive_days} days (>365d threshold)"
+        graveyard_reason = (
+            f"Dormant heuristic: no pushes in {inactive_days} days (>365d threshold; "
+            "inactivity signal only — verify via issues/commits before attributing cause)"
+        )
 
     license_obj = raw.get("license") or {}
     license_spdx = license_obj.get("spdx_id") if isinstance(license_obj, dict) else ""
@@ -643,6 +660,8 @@ def scout_github(
     token: str | None,
     auth_source: str,
     tool_queries: list[str] | None = None,
+    topics: list[str] | None = None,
+    tool_topics: list[str] | None = None,
     max_repos_per_query: int = 8,
     max_incumbents_for_issues: int = 4,
     issues_per_repo: int = 5,
@@ -663,7 +682,10 @@ def scout_github(
         "reset_epoch": None,
     }
 
-    for q in queries:
+    combined_competitor_queries = list(queries) + [normalize_topic_query(t) for t in (topics or []) if t.strip()]
+    combined_tool_queries = list(tool_queries or []) + [normalize_topic_query(t) for t in (tool_topics or []) if t.strip()]
+
+    for q in combined_competitor_queries:
         if rate_limit_info.get("remaining") is not None and int(rate_limit_info["remaining"]) <= 1:
             errors.append("GitHub Search API rate limit nearly exhausted; skipping remaining queries.")
             break
@@ -691,7 +713,7 @@ def scout_github(
             errors.append(f"Search query '{q}' failed: {e}")
 
     # Scout open-source building blocks / libraries / tooling if requested
-    for tq in tool_queries or []:
+    for tq in combined_tool_queries:
         if rate_limit_info.get("remaining") is not None and int(rate_limit_info["remaining"]) <= 1:
             errors.append("GitHub Search API rate limit nearly exhausted; skipping remaining tool queries.")
             break
@@ -806,12 +828,27 @@ def scout_github(
     for pp in pain_points[max_comment_fetches:]:
         cache.upsert_pain_point(pp)
 
+    search_limits = {
+        "max_repos_per_query": max_repos_per_query,
+        "max_incumbents_for_issues": max_incumbents_for_issues,
+        "issues_per_repo": issues_per_repo,
+        "sort_order": "stars:desc (single page per query; star-weighted sample)",
+        "default_free_text_scope": "in:name,description (unless explicit topic:, in:, or repo: qualifier is passed)",
+        "graveyard_heuristic": (
+            f"Archived by maintainer OR >{GRAVEYARD_DAYS_THRESHOLD} days since last git push. "
+            "Inactivity is a maintenance signal only — never claim a repo stalled due to a specific "
+            "architectural choice without issue/commit evidence."
+        ),
+        "star_velocity_heuristic": "Approximate lifetime average (total_stars / age_months), not recent adoption momentum.",
+    }
+
     return {
         "scouted_at": now_iso(),
         "auth_source": auth_source,
         "rate_limit": rate_limit_info,
-        "queries": queries,
-        "tool_queries": tool_queries or [],
+        "search_limits": search_limits,
+        "queries": combined_competitor_queries,
+        "tool_queries": combined_tool_queries,
         "active_incumbents": incumbents,
         "graveyard_repos": graveyard,
         "oss_building_blocks": oss_tools,
@@ -829,6 +866,7 @@ def format_markdown_digest(report: dict[str, Any]) -> str:
     pain_points = report.get("pain_points", [])
     warnings = report.get("warnings", [])
     rl = report.get("rate_limit") or {}
+    limits = report.get("search_limits") or {}
 
     rl_str = rl.get("search_api_quota", "unknown")
     if rl.get("remaining") is not None and rl.get("limit") is not None:
@@ -837,10 +875,16 @@ def format_markdown_digest(report: dict[str, Any]) -> str:
     lines = [
         "# Prior-Art & Stack Config Scout Digest",
         f"- **Auth Mode:** `{report.get('auth_source', 'unknown')}` — Search API Quota: `{rl_str}`",
-        f"- **Competitor Queries:** {', '.join(f'`{q}`' for q in report.get('queries', []))}",
+        f"- **Competitor Queries (`-q` / `--topic`):** {', '.join(f'`{q}`' for q in report.get('queries', []))}",
     ]
     if report.get("tool_queries"):
-        lines.append(f"- **OSS Tooling Queries:** {', '.join(f'`{q}`' for q in report.get('tool_queries', []))}")
+        lines.append(f"- **OSS Tooling Queries (`-t` / `--tool-topic`):** {', '.join(f'`{q}`' for q in report.get('tool_queries', []))}")
+    if limits:
+        lines.append(
+            f"- **Search Scope & Heuristics:** Up to {limits.get('max_repos_per_query', 8)} star-sorted repos/query "
+            f"(`{limits.get('default_free_text_scope', 'in:name,description')}`). "
+            "Star velocity (`stars / age_months`) and the >365d dormant threshold are heuristics, not causal proof."
+        )
     lines.extend(
         [
             f"- **Discovered:** {len(incumbents)} Active Incumbents | {len(graveyard)} Graveyard/Dormant Repos | "
@@ -859,7 +903,7 @@ def format_markdown_digest(report: dict[str, Any]) -> str:
     if not incumbents:
         lines.append("_No active incumbents found._")
     else:
-        lines.append("| Repo | Stars | Star Velocity | Last Push | Verified Config Files | Summary |")
+        lines.append("| Repo | Stars | Avg Velocity (Heuristic) | Last Push | Verified Config Files | Summary |")
         lines.append("| :--- | :---: | :---: | :---: | :--- | :--- |")
         for r in incumbents[:8]:
             desc = (r.get("description") or "—").replace("|", "\\|")[:90]
@@ -880,11 +924,14 @@ def format_markdown_digest(report: dict[str, Any]) -> str:
             )
         lines.append("")
 
-    lines.append("## Graveyard & Dormant Check (Archived or >365d No Pushes)")
+    lines.append("## Graveyard & Dormant Check (Heuristic: Archived or >365d No Pushes)")
+    lines.append(
+        "_Note: >365d inactivity is a maintenance heuristic only. Do not claim a repository stalled due to a specific architectural choice without citing an issue or maintainer post-mortem._"
+    )
     if not graveyard:
         lines.append("_No archived or dormant repos flagged for these queries._")
     else:
-        lines.append("| Repo | Stars | Inactive | Signal | Summary |")
+        lines.append("| Repo | Stars | Inactive | Heuristic Signal | Summary |")
         lines.append("| :--- | :---: | :---: | :--- | :--- |")
         for r in graveyard[:6]:
             desc = (r.get("description") or "—").replace("|", "\\|")[:90]
@@ -894,7 +941,7 @@ def format_markdown_digest(report: dict[str, Any]) -> str:
     lines.append("")
 
     if oss_tools:
-        lines.append("## Scouted OSS Building Blocks & Libraries (`--tool-query`)")
+        lines.append("## Scouted OSS Building Blocks & Libraries (`--tool-query` / `--tool-topic`)")
         lines.append("| Repo | Stars | License | Language | Last Push | Purpose / Summary |")
         lines.append("| :--- | :---: | :---: | :---: | :---: | :--- |")
         for t in oss_tools[:10]:
@@ -932,8 +979,14 @@ def main(argv: list[str] | None = None) -> int:
         "--query",
         "-q",
         action="append",
-        required=True,
+        default=[],
         help="GitHub competitor repository search query (can be passed multiple times)",
+    )
+    parser.add_argument(
+        "--topic",
+        action="append",
+        default=[],
+        help="GitHub topic qualifier for competitor repositories (e.g. 'workflow-engine', 'job-scheduler')",
     )
     parser.add_argument(
         "--tool-query",
@@ -942,10 +995,19 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         help="GitHub search query for open-source building blocks, SDKs, or tools to build the project",
     )
+    parser.add_argument(
+        "--tool-topic",
+        action="append",
+        default=[],
+        help="GitHub topic qualifier for open-source building blocks (e.g. 'sqlite', 'cron')",
+    )
     parser.add_argument("--max-repos", type=int, default=8, help="Max repos per query")
     parser.add_argument("--json", action="store_true", help="Print JSON output instead of Markdown digest")
 
     args = parser.parse_args(argv)
+    if not args.query and not args.topic:
+        parser.error("At least one `--query` (`-q`) or `--topic` is required.")
+
     workspace = Path(args.workspace).resolve()
     preflight_dir = workspace / ".preflight"
     preflight_dir.mkdir(parents=True, exist_ok=True)
@@ -959,6 +1021,8 @@ def main(argv: list[str] | None = None) -> int:
             token=token,
             auth_source=auth_source,
             tool_queries=args.tool_query,
+            topics=args.topic,
+            tool_topics=args.tool_topic,
             max_repos_per_query=args.max_repos,
         )
     finally:

@@ -36,6 +36,7 @@ from state import (
     build_stack_markdown,
     evaluate_gate,
     export_tickets_to_dir,
+    format_memory_strategy_display,
     format_stack_explained_table,
     load_decisions,
     load_prior_art as load_prior_art_optional,
@@ -66,27 +67,43 @@ def build_spec_markdown(
     state: dict[str, Any],
     decisions: list[dict[str, Any]],
     prior_art: dict[str, Any],
+    is_draft: bool | None = None,
 ) -> str:
     project_name = state.get("project_name") or "Untitled Project"
     project_summary = state.get("project_summary") or "No project summary provided."
     runtime = state.get("target_runtime") or "Unspecified Runtime"
     stack = ", ".join(state.get("tech_stack") or []) or "Unspecified"
     readiness_score = int(state.get("readiness_score", 0))
+    unlocked = bool(state.get("readiness_unlocked", False))
+    draft = (not unlocked) if is_draft is None else is_draft
+    title_prefix = "[DRAFT] " if draft else ""
+    readiness_badge = "DRAFT — Readiness Gate Bypassed via `--force`" if draft else "Evidence-Verified"
 
     lines = [
-        f"# System Design Specification: {project_name}",
-        "",
-        f"- **Readiness Score:** {readiness_score}% (Evidence-Verified)",
-        f"- **Target Runtime:** {runtime}",
-        f"- **Tech Stack:** {stack}",
-        "",
-        "## 1. Executive Summary",
-        "",
-        project_summary,
-        "",
-        "## 2. Architectural Dimensions & Stress-Tested Edge Cases",
+        f"# {title_prefix}System Design Specification: {project_name}",
         "",
     ]
+    if draft:
+        lines.extend(
+            [
+                "> ⚠️ **DRAFT SPECIFICATION — READINESS GATE LOCKED:** This document was generated using `--force` before all PreFlight Readiness Gate checks passed. Do not treat as an approved production spec.",
+                "",
+            ]
+        )
+    lines.extend(
+        [
+            f"- **Readiness Score:** {readiness_score}% ({readiness_badge})",
+            f"- **Target Runtime:** {runtime}",
+            f"- **Tech Stack:** {stack}",
+            "",
+            "## 1. Executive Summary",
+            "",
+            project_summary,
+            "",
+            "## 2. Architectural Dimensions & Stress-Tested Edge Cases",
+            "",
+        ]
+    )
 
     for dim in DIMENSIONS:
         d = state.get("dimensions", {}).get(dim, {})
@@ -106,11 +123,14 @@ def build_spec_markdown(
     # Memory & Agent Communication Section
     mem = state.get("memory_architecture") or {}
     if mem.get("strategy") or mem.get("agent_communication_pattern") or mem.get("failure_modes"):
+        secondaries = [s for s in (mem.get("secondary_strategies") or []) if s]
         lines.extend(
             [
                 "### Memory, State & Agent Communication Workflow",
                 "",
-                f"- **Selected Memory Strategy:** `{mem.get('strategy') or 'Unspecified'}`",
+                f"- **Primary Memory Strategy:** `{mem.get('strategy') or 'Unspecified'}`",
+                f"- **Secondary / Combined Strategies:** {', '.join(f'`{s}`' for s in secondaries) if secondaries else 'None (single-strategy)'}",
+                f"- **Combined Memory Profile:** `{format_memory_strategy_display(mem)}`",
                 f"- **Agent / Component Communication Pattern:** {mem.get('agent_communication_pattern') or '—'}",
                 f"- **Workflow Memory Lifecycle:** {mem.get('workflow_memory_flow') or '—'}",
                 f"- **Why Chosen (vs. RAG / Vector DB / Alternatives):** {mem.get('rationale') or '—'}",
@@ -128,7 +148,7 @@ def build_spec_markdown(
     oss_blocks = prior_art.get("oss_building_blocks") or []
     observed_configs = prior_art.get("observed_stack_configs") or []
     if tools or oss_blocks or observed_configs:
-        lines.append(f"## {sec_num}. Stack Explained (Config-Verified Tooling, Alternatives & Now vs. Later)")
+        lines.append(f"## {sec_num}. Stack Explained (Tooling, Alternatives, Now vs. Later & Proof Status)")
         sec_num += 1
         lines.append("")
         if tools:
@@ -410,7 +430,7 @@ def build_html(
         )
     pain_points_html = "".join(pp_cards) or '<div class="card"><p class="muted">No verified open issue pain points mined.</p></div>'
 
-    # 3b. "Stack Explained" (Config-Verified Tooling, Now vs. Later) & Memory Architecture HTML
+    # 3b. "Stack Explained" (Tooling, Now vs. Later, Verified vs Claimed) & Memory Architecture HTML
     tools = state.get("tooling_recommendations") or []
     observed_configs = prior_art.get("observed_stack_configs") or []
     if tools:
@@ -423,6 +443,12 @@ def build_html(
                 else '<span class="badge badge-blue">LATER (Defer)</span>'
             )
             proof = esc(t.get("config_proof") or "—")
+            p_status = t.get("proof_status") or "claimed-unverified"
+            p_source = esc(t.get("proof_source") or "")
+            if p_status == "verified":
+                proof_badge = f'<span class="badge badge-green">Verified ({p_source})</span>'
+            else:
+                proof_badge = '<span class="badge badge-red">Claimed / Unverified</span>'
             tool_rows.append(
                 f"""
                 <tr>
@@ -434,7 +460,7 @@ def build_html(
                     <td><strong>{esc(t.get('purpose'))}</strong></td>
                     <td>{esc(t.get('why'))}</td>
                     <td class="muted">{esc(t.get('alternatives'))}</td>
-                    <td><code>{proof}</code></td>
+                    <td>{proof_badge}<div style="margin-top:0.2rem"><code>{proof}</code></div></td>
                 </tr>
                 """
             )
@@ -475,7 +501,7 @@ def build_html(
         oss_rows = '<tr><td colspan="6" class="muted">No open-source building blocks scouted via `scout.py -t` yet.</td></tr>'
 
     mem = state.get("memory_architecture") or {}
-    mem_strategy = esc(mem.get("strategy") or "Not explicitly set (see Memory dimension)")
+    mem_strategy = esc(format_memory_strategy_display(mem) if mem.get("strategy") else "Not explicitly set (see Memory dimension)")
     mem_comm = esc(mem.get("agent_communication_pattern") or "—")
     mem_flow = esc(mem.get("workflow_memory_flow") or "—")
     mem_rationale = esc(mem.get("rationale") or "—")
@@ -537,13 +563,24 @@ def build_html(
 
     stack_badges = "".join(f'<span class="stack-pill">{esc(s)}</span>' for s in stack_items) or '<span class="stack-pill">TBD</span>'
     spec_json_escaped = json.dumps(spec_markdown)
+    title_prefix = "[DRAFT] " if not unlocked else ""
+    rubric_subtitle = "Evidence-Verified Rubric" if unlocked else "DRAFT (Gate Bypassed via --force)"
+    draft_banner_html = (
+        """
+        <div style="background:#ef444422; border:2px solid #ef4444; color:#fca5a5; padding:1rem 1.25rem; border-radius:10px; margin-bottom:1.5rem; font-weight:600;">
+          ⚠️ <strong>DRAFT BLUEPRINT (READINESS GATE LOCKED):</strong> This report was rendered with <code>--force</code> before meeting PreFlight's 80% evidence gate. All specifications and tickets are marked <code>DRAFT</code>.
+        </div>
+        """
+        if not unlocked
+        else ""
+    )
 
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>PreFlight Blueprint — {project_name}</title>
+<title>{title_prefix}PreFlight Blueprint — {project_name}</title>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 <style>
   :root {{
@@ -723,10 +760,11 @@ def build_html(
 </head>
 <body>
 <div class="container">
+  {draft_banner_html}
   <header>
     <div class="title-group">
       <div class="score-label">PREFLIGHT ARCHITECTURE &amp; PRIOR-ART BLUEPRINT</div>
-      <h1>{project_name}</h1>
+      <h1>{title_prefix}{project_name}</h1>
       <p>{project_summary}</p>
       <div class="meta-row">
         <span class="stack-pill">Runtime: {runtime}</span>
@@ -736,7 +774,7 @@ def build_html(
     <div class="score-box">
       <div class="score-label">{gate_badge_text}</div>
       <div class="score-number">{readiness_score}%</div>
-      <div class="muted">Evidence-Verified Rubric</div>
+      <div class="muted">{rubric_subtitle}</div>
       <button class="copy-btn" onclick="copySpecMarkdown(this)">Copy Spec Markdown (.preflight/SPEC.md)</button>
     </div>
   </header>
@@ -864,7 +902,7 @@ def build_html(
     <div class="mermaid-box">
       <pre class="mermaid">{esc(topology_mermaid)}</pre>
       <details class="raw-mermaid">
-        <summary>View raw Mermaid source (offline fallback)</summary>
+        <summary>View raw Mermaid source (Note: visual diagram rendering requires internet access for Mermaid CDN)</summary>
         <pre>{esc(topology_mermaid)}</pre>
       </details>
     </div>
@@ -873,7 +911,7 @@ def build_html(
     <div class="mermaid-box">
       <pre class="mermaid">{esc(sequence_mermaid)}</pre>
       <details class="raw-mermaid">
-        <summary>View raw Mermaid source (offline fallback)</summary>
+        <summary>View raw Mermaid source (Note: visual diagram rendering requires internet access for Mermaid CDN)</summary>
         <pre>{esc(sequence_mermaid)}</pre>
       </details>
     </div>
@@ -975,9 +1013,10 @@ def main(argv: list[str] | None = None) -> int:
         sequence_mermaid = "sequenceDiagram\n    Note over User: Draft Sequence (Pending set-design)"
         sys_design["sequence_mermaid"] = sequence_mermaid
 
+    is_draft = not unlocked
     decisions = load_decisions(workspace)
     prior_art = load_prior_art(workspace)
-    spec_md = build_spec_markdown(state, decisions, prior_art)
+    spec_md = build_spec_markdown(state, decisions, prior_art, is_draft=is_draft)
     html_content = build_html(state, decisions, prior_art, spec_md)
 
     out_path = workspace / args.output
@@ -990,12 +1029,13 @@ def main(argv: list[str] | None = None) -> int:
 
     stack_path = workspace / ".preflight" / "STACK.md"
     stack_path.parent.mkdir(parents=True, exist_ok=True)
-    stack_path.write_text(build_stack_markdown(state) + "\n", encoding="utf-8")
+    stack_path.write_text(build_stack_markdown(state, is_draft=is_draft) + "\n", encoding="utf-8")
 
-    ticket_files = export_tickets_to_dir(workspace, state, decisions)
+    ticket_files = export_tickets_to_dir(workspace, state, decisions, is_draft=is_draft)
 
+    draft_tag = " [DRAFT]" if is_draft else ""
     print(
-        f"Blueprint rendered: {out_path} | Spec exported: {spec_path} | Stack exported: {stack_path} | "
+        f"Blueprint rendered{draft_tag}: {out_path} | Spec exported: {spec_path} | Stack exported: {stack_path} | "
         f"Tickets exported: {len(ticket_files)} in .preflight/issues/ (Readiness: {score}%)"
     )
     return 0
