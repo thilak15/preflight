@@ -5,6 +5,7 @@ All notable changes to **PreFlight** are documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Direct GitHub Issues Export (`state.py export-github-issues`, `PreFlightOps.export_github_issues`)**: Enables exporting ordered vertical-slice implementation tickets directly to GitHub Issues via `gh` CLI with labels `ready-for-agent` and `needs-triage` (created via `gh label create --force` if not present), verbatim ticket acceptance criteria and architecture reference header linking to `.preflight/SPEC.md`, `.preflight/STACK.md`, `docs/adr/`, and `GLOSSARY.md`, dynamic upstream `Blocked by: #NN` dependency resolution as issues are created in sequence `01` to `NN`, and automatic synchronization with `.preflight/issues/INDEX.md`.
 - **Readiness Gate Verdict Value Object (`state.py GateVerdict`)**: Encapsulates `(score, unlocked, missing, is_draft)` as an immutable, frozen value object with backwards-compatible tuple unpacking.
 - **Consolidated Draft Watermarking Pipeline (`state.py ArtifactWatermarker`)**: Unifies draft title decoration, document warning banners, ticket status tokens, and issue banner headers across `state.py` and `render_blueprint.py`.
 - **Workspace Store Module (`state.py WorkspaceStore`)**: Encapsulates `.preflight/` path resolution, schema defaults, atomic state persistence, and reset lifecycle without directory-creation side-effects during read operations.

@@ -34,7 +34,10 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -1134,6 +1137,238 @@ def export_tickets_to_dir(
     return created_files
 
 
+class CommandRunner:
+    """Standard-library command execution wrapper for subprocess commands."""
+
+    def run(
+        self,
+        cmd: list[str],
+        check: bool = False,
+        text: bool = True,
+        capture_output: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(cmd, check=check, text=text, capture_output=capture_output)
+
+
+def build_github_issue_references_header(repo: str, branch: str = "main") -> str:
+    """
+    Format standard PreFlight architecture references linking to SPEC.md, STACK.md,
+    docs/adr/, and GLOSSARY.md in the target GitHub repository.
+    """
+    clean_repo = repo.strip().strip("/")
+    clean_branch = branch.strip() or "main"
+    base_blob = f"https://github.com/{clean_repo}/blob/{clean_branch}"
+    return (
+        f"> 🔗 **PreFlight Architecture References:**\n"
+        f"> - **Specification:** [{clean_repo}/.preflight/SPEC.md]({base_blob}/.preflight/SPEC.md)\n"
+        f"> - **Stack Explained:** [{clean_repo}/.preflight/STACK.md]({base_blob}/.preflight/STACK.md)\n"
+        f"> - **Decision Ledger (ADRs):** [{clean_repo}/docs/adr/]({base_blob}/docs/adr/)\n"
+        f"> - **Domain Glossary:** [{clean_repo}/GLOSSARY.md]({base_blob}/GLOSSARY.md)\n"
+        f"\n"
+        f"---"
+    )
+
+
+def resolve_blocked_by_in_ticket(body_text: str, created_map: dict[int, int]) -> str:
+    """
+    Replace ticket index references in `**Blocked by:** ...` with live `#<issue_num>`.
+    Example: `**Blocked by:** `01` (01-foo.md)` -> `**Blocked by:** #1 (01-foo.md)`.
+    """
+    if not created_map:
+        return body_text
+
+    updated_lines: list[str] = []
+    for line in body_text.splitlines():
+        if line.startswith("**Blocked by:**"):
+            prefix, sep, rest = line.partition(":")
+            for t_idx, issue_num in sorted(created_map.items(), reverse=True):
+                rest = re.sub(rf"`0?{t_idx}`", f"#{issue_num}", rest)
+                rest = re.sub(rf"\b0?{t_idx}\b(?![-\w]*\.md)", f"#{issue_num}", rest)
+            updated_lines.append(f"{prefix}:{rest}")
+        else:
+            updated_lines.append(line)
+    return "\n".join(updated_lines)
+
+
+def export_tickets_to_github(
+    workspace: Path,
+    repo: str,
+    branch: str = "main",
+    issues_dir: Path | None = None,
+    force: bool = False,
+    dry_run: bool = False,
+    labels: list[str] | None = None,
+    runner: Any | None = None,
+) -> dict[str, Any]:
+    """
+    Export all ordered PreFlight vertical-slice implementation tickets directly to GitHub Issues.
+    - Prepend clickable links to SPEC.md, STACK.md, docs/adr/, and GLOSSARY.md.
+    - Applies labels `ready-for-agent` and `needs-triage`.
+    - Creates issues sequentially (01 to NN) and resolves `Blocked by` issue numbers dynamically.
+    - Returns structured summary and updates local INDEX.md with live GitHub issue links.
+    """
+    clean_repo = repo.strip().strip("/")
+    if not clean_repo or "/" not in clean_repo:
+        raise ValueError(
+            f"Invalid GitHub repository '{repo}'. Expected format: 'owner/repo' (e.g. 'thilak15/ClawBridge')."
+        )
+
+    cmd_runner = runner or CommandRunner()
+    workspace = Path(workspace).resolve()
+    store = WorkspaceStore(workspace)
+    state = store.load_state()
+
+    verdict = evaluate_gate(state, workspace)
+    if not verdict.unlocked and not force:
+        raise PermissionError(
+            f"Readiness Gate is LOCKED ({verdict.score}% / 80% required). Pass `--force` to export draft issues anyway.\n"
+            + "\n".join(f"  - {m}" for m in verdict.missing)
+        )
+    is_draft = not verdict.unlocked
+
+    if not dry_run:
+        if runner is None and not shutil.which("gh"):
+            raise RuntimeError(
+                "GitHub CLI (`gh`) is not installed or not found in PATH. Install `gh` to export GitHub issues."
+            )
+        auth_check = cmd_runner.run(["gh", "auth", "token"])
+        if auth_check.returncode != 0:
+            raise RuntimeError(
+                "GitHub CLI (`gh`) is not authenticated. Run `gh auth login` before exporting GitHub issues."
+            )
+
+    target_dir = issues_dir or store.issues_dir
+    existing_tickets = (
+        sorted([f for f in target_dir.glob("*.md") if f.name != "INDEX.md"])
+        if target_dir.exists()
+        else []
+    )
+    if not existing_tickets:
+        decisions = store.load_decisions()
+        existing_tickets = export_tickets_to_dir(workspace, state, decisions, issues_dir=target_dir, is_draft=is_draft)
+
+    active_labels = labels or ["ready-for-agent", "needs-triage"]
+    label_meta = {
+        "ready-for-agent": ("0E8A16", "Ready for agent implementation"),
+        "needs-triage": ("FBCA04", "Needs triage before starting"),
+    }
+    if not dry_run:
+        for lbl in active_labels:
+            color, desc = label_meta.get(lbl, ("0E8A16", "PreFlight label"))
+            cmd_runner.run(
+                ["gh", "label", "create", lbl, "--repo", clean_repo, "--color", color, "--description", desc, "--force"]
+            )
+
+    ref_header = build_github_issue_references_header(clean_repo, branch=branch)
+    created_map: dict[int, int] = {}
+    created_issues: list[dict[str, Any]] = []
+
+    for f in existing_tickets:
+        raw_text = f.read_text(encoding="utf-8")
+        lines = raw_text.splitlines()
+        first_line = lines[0] if lines else f.stem
+        issue_title = re.sub(r"^#+\s*", "", first_line).strip()
+
+        m = re.match(r"^(\d+)", f.stem)
+        ticket_idx = int(m.group(1)) if m else len(created_issues) + 1
+
+        resolved_content = resolve_blocked_by_in_ticket(raw_text, created_map)
+        full_body = f"{ref_header}\n\n{resolved_content}"
+
+        if dry_run:
+            simulated_issue_num = ticket_idx
+            simulated_url = f"https://github.com/{clean_repo}/issues/{simulated_issue_num}"
+            issue_num = simulated_issue_num
+            issue_url = simulated_url
+        else:
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, suffix=".md") as tmp:
+                tmp.write(full_body)
+                tmp_path = Path(tmp.name)
+            try:
+                cmd = [
+                    "gh",
+                    "issue",
+                    "create",
+                    "--repo",
+                    clean_repo,
+                    "--title",
+                    issue_title,
+                    "--body-file",
+                    str(tmp_path),
+                ]
+                for lbl in active_labels:
+                    cmd.extend(["--label", lbl])
+                proc = cmd_runner.run(cmd)
+                if proc.returncode != 0:
+                    raise RuntimeError(
+                        f"Failed creating GitHub issue for '{issue_title}' on {clean_repo}: {proc.stderr or proc.stdout}"
+                    )
+                issue_url = proc.stdout.strip()
+                match = re.search(r"/issues/(\d+)$", issue_url)
+                if match:
+                    issue_num = int(match.group(1))
+                else:
+                    issue_num = ticket_idx
+            finally:
+                tmp_path.unlink(missing_ok=True)
+
+        created_map[ticket_idx] = issue_num
+        created_issues.append(
+            {
+                "index": ticket_idx,
+                "title": issue_title,
+                "number": issue_num,
+                "url": issue_url,
+                "file": f.name,
+                "body": full_body,
+            }
+        )
+
+    index_file = target_dir / "INDEX.md"
+    if index_file.exists():
+        index_content = index_file.read_text(encoding="utf-8")
+        for item in created_issues:
+            t_idx = item["index"]
+            num = item["number"]
+            url = item["url"]
+            index_content = re.sub(
+                rf"(\|\s*`{t_idx:02d}`\s*\|\s*)(\[[^\]]+\]\(\./[^)]+\))",
+                rf"\1[#{num}]({url})",
+                index_content,
+            )
+        index_file.write_text(index_content, encoding="utf-8")
+
+    return {
+        "repo": clean_repo,
+        "branch": branch,
+        "total": len(created_issues),
+        "issues": created_issues,
+        "is_draft": is_draft,
+    }
+
+
+def format_github_issues_summary(result: dict[str, Any]) -> str:
+    lines = [
+        f"Exported {result['total']} issue(s) to GitHub repository '{result['repo']}' (branch: {result['branch']}):",
+    ]
+    for issue in result["issues"]:
+        lines.append(f"  - Issue #{issue['number']}: {issue['title']} ({issue['url']})")
+
+    if result["issues"]:
+        first_issue = result["issues"][0]
+        lines.extend(
+            [
+                "",
+                "=" * 80,
+                f"Issue #{first_issue['number']} Details (Verify Acceptance Criteria & References):",
+                "=" * 80,
+                first_issue["body"],
+                "=" * 80,
+            ]
+        )
+    return "\n".join(lines)
+
+
 def format_scorecard(state: dict[str, Any], workspace: Path | None = None) -> str:
     total, unlocked, missing = evaluate_gate(state, workspace)
     gate_str = "UNLOCKED (Ready for Blueprint)" if unlocked else "LOCKED"
@@ -1451,6 +1686,51 @@ class PreFlightOps:
         store.save_state(state)
         return state, sys_design
 
+    @classmethod
+    def export_tickets(
+        cls,
+        workspace: Any,
+        issues_dir: Path | None = None,
+        force: bool = False,
+    ) -> tuple[dict[str, Any], list[Path], bool]:
+        workspace_path, store = cls._resolve_workspace(workspace)
+        state = store.load_state()
+        verdict = evaluate_gate(state, workspace_path)
+        if not verdict.unlocked and not force:
+            raise PermissionError(
+                f"Readiness Gate is LOCKED ({verdict.score}% / 80% required). Pass `--force` to export draft tickets anyway.\n"
+                + "\n".join(f"  - {m}" for m in verdict.missing)
+            )
+        is_draft = not verdict.unlocked
+        decisions = store.load_decisions()
+        out_dir = issues_dir or store.issues_dir
+        created = export_tickets_to_dir(workspace_path, state, decisions, issues_dir=out_dir, is_draft=is_draft)
+        return state, created, is_draft
+
+    @classmethod
+    def export_github_issues(
+        cls,
+        workspace: Any,
+        repo: str,
+        branch: str = "main",
+        issues_dir: Path | None = None,
+        force: bool = False,
+        dry_run: bool = False,
+        labels: list[str] | None = None,
+        runner: Any | None = None,
+    ) -> dict[str, Any]:
+        workspace_path, _ = cls._resolve_workspace(workspace)
+        return export_tickets_to_github(
+            workspace=workspace_path,
+            repo=repo,
+            branch=branch,
+            issues_dir=issues_dir,
+            force=force,
+            dry_run=dry_run,
+            labels=labels,
+            runner=runner,
+        )
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="PreFlight state, tooling, memory & decision ledger manager")
@@ -1616,7 +1896,37 @@ def main(argv: list[str] | None = None) -> int:
     p_tickets.add_argument(
         "--force",
         action="store_true",
-        help="Export tickets even if Readiness Gate is <80%",
+        help="Export tickets even if Readiness Gate is <80%%",
+    )
+
+    p_gh_issues = sub.add_parser(
+        "export-github-issues",
+        help="Export all ordered implementation tickets to GitHub Issues via gh CLI",
+    )
+    p_gh_issues.add_argument(
+        "--repo",
+        required=True,
+        help="GitHub repository in 'owner/repo' format (e.g. thilak15/ClawBridge)",
+    )
+    p_gh_issues.add_argument(
+        "--branch",
+        default="main",
+        help="GitHub branch to link for architecture documents (defaults to main)",
+    )
+    p_gh_issues.add_argument(
+        "--output-dir",
+        default="",
+        help="Custom directory for local ticket files (defaults to .preflight/issues)",
+    )
+    p_gh_issues.add_argument(
+        "--force",
+        action="store_true",
+        help="Export draft issues even if Readiness Gate is <80%%",
+    )
+    p_gh_issues.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Simulate issue creation without calling GitHub API",
     )
 
     args = parser.parse_args(argv)
@@ -1774,6 +2084,22 @@ def main(argv: list[str] | None = None) -> int:
         for f in created:
             print(f"  - {f.relative_to(workspace) if f.is_relative_to(workspace) else f}")
         return 0
+
+    if args.cmd == "export-github-issues":
+        try:
+            res = PreFlightOps.export_github_issues(
+                workspace=workspace,
+                repo=args.repo,
+                branch=args.branch,
+                issues_dir=Path(args.output_dir).resolve() if args.output_dir else None,
+                force=args.force,
+                dry_run=args.dry_run,
+            )
+            print(format_github_issues_summary(res))
+            return 0
+        except (ValueError, PermissionError, RuntimeError) as err:
+            print(f"ERROR: {err}", file=sys.stderr)
+            return 2
 
     return 1
 

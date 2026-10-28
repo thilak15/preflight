@@ -126,6 +126,7 @@ When the Readiness Gate unlocks and `render_blueprint.py` runs, PreFlight produc
 | **`.preflight/SPEC.md`** | Clean, git-ready system design specification. |
 | **`.preflight/STACK.md`** | **"Stack Explained"** table (`Now` vs. `Later`, **`✅ Verified`** vs. **`⚠️ Claimed / Unverified`** config proof, alternatives) + Primary & Secondary Memory architecture. |
 | **`.preflight/issues/01-*.md`** | Individual, ordered vertical-slice tickets (`01`, `02`, `03`...) with ticket-specific acceptance criteria derived from each step, relevant ADRs, and critiques. |
+| **GitHub Issues (`gh`)** | Exported directly to target repo via `state.py export-github-issues --repo <owner/repo>` with labels `ready-for-agent` and `needs-triage`, verbatim acceptance criteria, references header, and dynamic `Blocked by: #NN` dependency numbers. |
 | **`docs/adr/NNNN-*.md`** | Permanent Architecture Decision Records with rejected alternatives. |
 | **`GLOSSARY.md`** | Ubiquitous domain language maintained throughout the interview. |
 
@@ -214,6 +215,9 @@ python3 skills/preflight/scripts/state.py --workspace . set-design \
   --step "Implement Linux cgroup v2 scope runner with cgroup.kill teardown (ADR-0002)"
 
 python3 skills/preflight/scripts/render_blueprint.py --workspace .
+
+# 7. Export Ordered Tickets to GitHub Issues (with links to SPEC, STACK, ADRs & dynamic Blocked by #NN resolution)
+python3 skills/preflight/scripts/state.py --workspace . export-github-issues --repo <owner/repo>
 ```
 
 </details>

@@ -241,7 +241,24 @@ Once the **Readiness Gate** is unlocked:
    - `.preflight/SPEC.md` and `.preflight/STACK.md`
    - `.preflight/issues/INDEX.md` (and the individual `01-...md`, `02-...md` tickets with ticket-specific acceptance criteria)
    - `GLOSSARY.md` and `docs/adr/`
-4. **Code One-by-One in Order (Handoff to Implementation)**:
-   Offer the user two ways to code the generated tickets:
-   - **Option A — One Ticket at a Time**: Work through `.preflight/issues/01-<slug>.md`, `02-<slug>.md`, ... sequentially (one vertical slice per context window), writing tests first and verifying each ticket's specific acceptance criteria before moving to the next.
-   - **Option B — Parallel Task Build**: When tickets declare independent `BlockedBy` edges in `.preflight/issues/INDEX.md`, use background implementer subagents to execute unblocked tickets in parallel and merge them onto an integration branch.
+4. **Handoff to Implementation (GitHub Issues or Local Tickets)**:
+   Offer the user their preferred execution path:
+   - **Option 1 — Direct GitHub Issues Export (Recommended)**:
+     Commit and push architecture documents so links work on GitHub, then export all tickets to GitHub Issues:
+     ```bash
+     # 1. Commit and push architecture artifacts so GitHub links resolve
+     git add .preflight/ docs/adr/ GLOSSARY.md
+     git commit -m "docs(preflight): architecture spec, stack explained, and adr ledger"
+     git push origin main
+
+     # 2. Export all tickets to GitHub Issues
+     python3 "$PREFLIGHT_SCRIPTS/state.py" --workspace . export-github-issues --repo <owner/repo>
+     ```
+     PreFlight will:
+     - Prepend GitHub links to `.preflight/SPEC.md`, `.preflight/STACK.md`, `docs/adr/`, and `GLOSSARY.md` at the top of each issue.
+     - Add labels `ready-for-agent` and `needs-triage` (created via `gh label create --force` if not present).
+     - Include the full, verbatim ticket content without shortening or truncating acceptance criteria.
+     - Sequentially resolve `Blocked by: #<num>` with the actual upstream GitHub issue number once created.
+     - Report all created issue numbers and display Issue #1 in its entirety for immediate verification.
+   - **Option 2 — One Ticket at a Time (Local Files)**: Work through `.preflight/issues/01-<slug>.md`, `02-<slug>.md`, ... sequentially (one vertical slice per context window), writing tests first and verifying each ticket's specific acceptance criteria before moving to the next.
+   - **Option 3 — Parallel Task Build**: When tickets declare independent `BlockedBy` edges in `.preflight/issues/INDEX.md`, use background implementer subagents to execute unblocked tickets in parallel and merge them onto an integration branch.

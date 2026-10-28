@@ -1315,6 +1315,122 @@ class TestArchitectureDeepening(unittest.TestCase):
         self.assertEqual(rl["remaining"], 27)
         self.assertEqual(rl["limit"], 30)
 
+    def test_github_issue_references_header_and_blocked_by_resolution(self) -> None:
+        """Verify GitHub issue architecture references header generation and dynamic Blocked by resolution."""
+        header = state.build_github_issue_references_header("thilak15/ClawBridge", "main")
+        self.assertIn("https://github.com/thilak15/ClawBridge/blob/main/.preflight/SPEC.md", header)
+        self.assertIn("https://github.com/thilak15/ClawBridge/blob/main/.preflight/STACK.md", header)
+        self.assertIn("https://github.com/thilak15/ClawBridge/blob/main/docs/adr/", header)
+        self.assertIn("https://github.com/thilak15/ClawBridge/blob/main/GLOSSARY.md", header)
+
+        # Dynamic dependency resolution
+        ticket_body = (
+            "# 02: Implement state layer\n"
+            "**What to build:** DB schema\n"
+            "**Blocked by:** `01` (01-bootstrap-stack.md)\n"
+            "**Status:** ready-for-agent\n"
+        )
+        resolved = state.resolve_blocked_by_in_ticket(ticket_body, {1: 42})
+        self.assertIn("**Blocked by:** #42 (01-bootstrap-stack.md)", resolved)
+
+    def test_export_tickets_to_github_dry_run_and_gate_locking(self) -> None:
+        """Verify export_tickets_to_github respects gate locking and executes cleanly in dry-run mode."""
+        st = state.default_state("TestGhExport")
+        self.store.save_state(st)
+
+        # Gate is locked: should raise PermissionError without force
+        with self.assertRaises(PermissionError):
+            state.export_tickets_to_github(
+                workspace=self.workspace,
+                repo="thilak15/ClawBridge",
+                force=False,
+            )
+
+        # Invalid repo format check
+        with self.assertRaises(ValueError):
+            state.export_tickets_to_github(
+                workspace=self.workspace,
+                repo="invalid-repo-without-slash",
+                force=True,
+                dry_run=True,
+            )
+
+        # Dry run with force
+        result = state.export_tickets_to_github(
+            workspace=self.workspace,
+            repo="thilak15/ClawBridge",
+            branch="main",
+            force=True,
+            dry_run=True,
+        )
+        self.assertTrue(result["is_draft"])
+        self.assertEqual(result["repo"], "thilak15/ClawBridge")
+        self.assertGreater(result["total"], 0)
+        first_issue = result["issues"][0]
+        self.assertEqual(first_issue["number"], 1)
+        self.assertIn("https://github.com/thilak15/ClawBridge/issues/1", first_issue["url"])
+        self.assertIn("PreFlight Architecture References", first_issue["body"])
+
+        summary = state.format_github_issues_summary(result)
+        self.assertIn("Exported", summary)
+        self.assertIn("Issue #1 Details", summary)
+
+    def test_export_tickets_to_github_with_fake_runner(self) -> None:
+        """Verify gh CLI command invocations, label creation, issue creation order, and INDEX.md update."""
+        st = state.default_state("BridgeSync")
+        self.store.save_state(st)
+
+        class FakeRunner:
+            def __init__(self) -> None:
+                self.calls: list[list[str]] = []
+                self.issue_counter = 100
+
+            def run(
+                self,
+                cmd: list[str],
+                check: bool = False,
+                text: bool = True,
+                capture_output: bool = True,
+            ) -> subprocess.CompletedProcess[str]:
+                self.calls.append(cmd)
+                if cmd[:3] == ["gh", "auth", "token"]:
+                    return subprocess.CompletedProcess(cmd, returncode=0, stdout="gho_mock_token\n", stderr="")
+                if cmd[:3] == ["gh", "label", "create"]:
+                    return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+                if cmd[:3] == ["gh", "issue", "create"]:
+                    self.issue_counter += 1
+                    url = f"https://github.com/thilak15/ClawBridge/issues/{self.issue_counter}\n"
+                    return subprocess.CompletedProcess(cmd, returncode=0, stdout=url, stderr="")
+                return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+
+        runner = FakeRunner()
+        result = state.PreFlightOps.export_github_issues(
+            workspace=self.workspace,
+            repo="thilak15/ClawBridge",
+            branch="main",
+            force=True,
+            dry_run=False,
+            runner=runner,
+        )
+
+        self.assertEqual(result["total"], 4)
+        label_calls = [c for c in runner.calls if c[:3] == ["gh", "label", "create"]]
+        self.assertEqual(len(label_calls), 2)
+        created_label_names = {c[3] for c in label_calls}
+        self.assertEqual(created_label_names, {"ready-for-agent", "needs-triage"})
+
+        issue_calls = [c for c in runner.calls if c[:3] == ["gh", "issue", "create"]]
+        self.assertEqual(len(issue_calls), 4)
+        for call in issue_calls:
+            self.assertIn("--label", call)
+            self.assertIn("ready-for-agent", call)
+            self.assertIn("needs-triage", call)
+
+        self.assertEqual([i["number"] for i in result["issues"]], [101, 102, 103, 104])
+
+        index_text = (self.store.issues_dir / "INDEX.md").read_text(encoding="utf-8")
+        self.assertIn("[#101](https://github.com/thilak15/ClawBridge/issues/101)", index_text)
+
     def test_no_unreachable_code_in_scripts_or_tests(self) -> None:
         """AST static check ensuring no unreachable statements follow return/raise/break/continue."""
         import ast
