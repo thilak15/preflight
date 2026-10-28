@@ -5,6 +5,11 @@ All notable changes to **PreFlight** are documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Readiness Gate Verdict Value Object (`state.py GateVerdict`)**: Encapsulates `(score, unlocked, missing, is_draft)` as an immutable, frozen value object with backwards-compatible tuple unpacking.
+- **Consolidated Draft Watermarking Pipeline (`state.py ArtifactWatermarker`)**: Unifies draft title decoration, document warning banners, ticket status tokens, and issue banner headers across `state.py` and `render_blueprint.py`.
+- **Workspace Store Module (`state.py WorkspaceStore`)**: Encapsulates `.preflight/` path resolution, schema defaults, atomic state persistence, and reset lifecycle without directory-creation side-effects during read operations.
+- **Domain Operations Facade (`state.py PreFlightOps`)**: Extracted core domain mutations (`init_project`, `update_dimension`, `add_tool`, `set_memory_architecture`, `add_critique`, `add_decision`, `set_system_design`) from the CLI parser into a testable interface that can be called statically or on an instantiated store.
+- **GitHub Client Seam & Fake Adapter (`scout.py GitHubClient`, `HttpGitHubClient`, `FakeGitHubClient`)**: Decoupled HTTP transport and header parsing from `github_get_json` and `scout_github`, allowing deterministic offline unit testing of prior-art discovery, config file inspection, and pain-point mining without monkey-patching `urllib`.
 - **Live-Link Skill Installer (`scripts/link-skills.sh`)**: Dev-only script to link `skills/preflight` directly into `~/.claude/skills`, `~/.agents/skills`, and `~/.gemini/config/skills` so that `git pull` automatically updates installed agent skills without re-copying. Includes safety guards against silent overwrite of real folders (`--force` required) and against symlinks pointing into the repository.
 
 ### Fixed

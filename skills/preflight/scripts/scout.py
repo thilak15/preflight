@@ -36,7 +36,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 CACHE_TTL_SECONDS = 7 * 24 * 3600
 GRAVEYARD_DAYS_THRESHOLD = 365
@@ -488,6 +488,7 @@ def inspect_repo_stack_configs(
     token: str | None,
     cache: RepoCache,
     rate_limit_info: dict[str, Any],
+    client: GitHubClient | None = None,
 ) -> list[dict[str, str]]:
     """
     Fetch root directory contents (and `pyproject.toml` / `.github` if present) from GitHub REST API
@@ -495,7 +496,7 @@ def inspect_repo_stack_configs(
     """
     contents_url = f"https://api.github.com/repos/{repo_full_name}/contents"
     try:
-        items = github_get_json(contents_url, token, cache, rate_limit_info)
+        items = github_get_json(contents_url, token, cache, rate_limit_info, client=client)
         if not isinstance(items, list):
             return []
         root_names = [str(it.get("name") or "") for it in items if isinstance(it, dict)]
@@ -506,7 +507,7 @@ def inspect_repo_stack_configs(
     if "pyproject.toml" in root_names:
         py_url = f"https://api.github.com/repos/{repo_full_name}/contents/pyproject.toml"
         try:
-            py_payload = github_get_json(py_url, token, cache, rate_limit_info)
+            py_payload = github_get_json(py_url, token, cache, rate_limit_info, client=client)
             if isinstance(py_payload, dict) and py_payload.get("content"):
                 raw_b64 = str(py_payload["content"]).replace("\n", "")
                 pyproject_text = base64.b64decode(raw_b64).decode("utf-8", errors="ignore")
@@ -517,7 +518,7 @@ def inspect_repo_stack_configs(
     if ".github" in root_names:
         gh_url = f"https://api.github.com/repos/{repo_full_name}/contents/.github"
         try:
-            gh_items = github_get_json(gh_url, token, cache, rate_limit_info)
+            gh_items = github_get_json(gh_url, token, cache, rate_limit_info, client=client)
             if isinstance(gh_items, list):
                 has_workflows = any(
                     isinstance(it, dict) and str(it.get("name") or "") == "workflows" for it in gh_items
@@ -601,37 +602,115 @@ def extract_top_comments(raw_comments: list[dict[str, Any]], max_comments: int =
     return [item for _, item in scored[:max_comments]]
 
 
+class GitHubClient:
+    """Abstract interface for fetching remote GitHub resources."""
+
+    def get_json(self, url: str, token: str | None = None) -> tuple[Any, dict[str, str]]:
+        """Fetch JSON payload and response headers for `url`. Returns (payload, headers_dict)."""
+        raise NotImplementedError
+
+
+class HttpGitHubClient(GitHubClient):
+    """Production GitHub client using standard library `urllib.request`."""
+
+    def __init__(self, timeout: float = 15.0):
+        self.timeout = timeout
+
+    def get_json(self, url: str, token: str | None = None) -> tuple[Any, dict[str, str]]:
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "PreFlight-PriorArt-Scout/0.4",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            headers_dict = {k: v for k, v in resp.headers.items()} if hasattr(resp, "headers") and resp.headers else {}
+            data = json.loads(resp.read().decode("utf-8"))
+            return data, headers_dict
+
+
+class FakeGitHubClient(GitHubClient):
+    """
+    In-memory mock GitHub API client for deterministic offline testing.
+    Can be seeded with static URL-to-payload mappings or URL matchers.
+    """
+
+    def __init__(
+        self,
+        responses: dict[str, Any] | None = None,
+        headers: dict[str, dict[str, str]] | None = None,
+        handlers: list[tuple[Callable[[str], bool], Any]] | None = None,
+    ):
+        self.responses: dict[str, Any] = dict(responses or {})
+        self.headers: dict[str, dict[str, str]] = dict(headers or {})
+        self.handlers: list[tuple[Callable[[str], bool], Any]] = list(handlers or [])
+        self.calls: list[tuple[str, str | None]] = []
+
+    def set_response(self, url: str, payload: Any, headers: dict[str, str] | None = None) -> None:
+        self.responses[url] = payload
+        if headers:
+            self.headers[url] = headers
+
+    def add_handler(self, predicate: Callable[[str], bool], handler: Any) -> None:
+        self.handlers.append((predicate, handler))
+
+    def get_json(self, url: str, token: str | None = None) -> tuple[Any, dict[str, str]]:
+        self.calls.append((url, token))
+        resp_headers = self.headers.get(url, {})
+
+        if url in self.responses:
+            payload = self.responses[url]
+            if callable(payload):
+                return payload(url), resp_headers
+            return payload, resp_headers
+
+        for predicate, handler in self.handlers:
+            if predicate(url):
+                if callable(handler):
+                    return handler(url), resp_headers
+                return handler, resp_headers
+
+        raise urllib.error.HTTPError(url, 404, "Not Found in FakeGitHubClient", {}, None)
+
+
 def github_get_json(
     url: str,
     token: str | None,
     cache: RepoCache,
     rate_limit_info: dict[str, Any] | None = None,
+    client: GitHubClient | None = None,
 ) -> Any:
     cached = cache.get_cached(url)
     if cached is not None:
         return cached
 
-    headers = {
-        "Accept": "application/vnd.github+json",
-        "User-Agent": "PreFlight-PriorArt-Scout/0.4",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+    if client is None:
+        client = HttpGitHubClient()
 
-    req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        if rate_limit_info is not None:
-            rem = resp.headers.get("X-RateLimit-Remaining")
-            lim = resp.headers.get("X-RateLimit-Limit")
-            rst = resp.headers.get("X-RateLimit-Reset")
-            if rem is not None:
+    data, headers = client.get_json(url, token=token)
+
+    if rate_limit_info is not None:
+        rem = headers.get("X-RateLimit-Remaining")
+        lim = headers.get("X-RateLimit-Limit")
+        rst = headers.get("X-RateLimit-Reset")
+        if rem is not None:
+            try:
                 rate_limit_info["remaining"] = int(rem)
-            if lim is not None:
+            except (ValueError, TypeError):
+                pass
+        if lim is not None:
+            try:
                 rate_limit_info["limit"] = int(lim)
-            if rst is not None:
+            except (ValueError, TypeError):
+                pass
+        if rst is not None:
+            try:
                 rate_limit_info["reset_epoch"] = int(rst)
-        data = json.loads(resp.read().decode("utf-8"))
+            except (ValueError, TypeError):
+                pass
 
     cache.set_cached(url, data)
     return data
@@ -643,10 +722,11 @@ def fetch_issue_top_comments(
     token: str | None,
     cache: RepoCache,
     rate_limit_info: dict[str, Any],
+    client: GitHubClient | None = None,
 ) -> list[dict[str, Any]]:
     url = f"https://api.github.com/repos/{repo_full_name}/issues/{issue_number}/comments?per_page=15"
     try:
-        raw_comments = github_get_json(url, token, cache, rate_limit_info)
+        raw_comments = github_get_json(url, token, cache, rate_limit_info, client=client)
         if isinstance(raw_comments, list):
             return extract_top_comments(raw_comments, max_comments=2)
     except Exception:
@@ -665,7 +745,11 @@ def scout_github(
     max_repos_per_query: int = 8,
     max_incumbents_for_issues: int = 4,
     issues_per_repo: int = 5,
+    client: GitHubClient | None = None,
 ) -> dict[str, Any]:
+    if client is None:
+        client = HttpGitHubClient()
+
     # GitHub Search API rate limits: 30 req/min (authenticated) vs 10 req/min (unauthenticated)
     if auth_source == "unauthenticated":
         max_repos_per_query = min(max_repos_per_query, 5)
@@ -693,7 +777,7 @@ def scout_github(
         encoded_q = urllib.parse.quote(scoped_q)
         url = f"https://api.github.com/search/repositories?q={encoded_q}&sort=stars&order=desc&per_page={max_repos_per_query}"
         try:
-            payload = github_get_json(url, token, cache, rate_limit_info)
+            payload = github_get_json(url, token, cache, rate_limit_info, client=client)
             for item in payload.get("items", []):
                 if item.get("fork") or is_noise_repo(item):
                     continue
@@ -721,7 +805,7 @@ def scout_github(
         encoded_tq = urllib.parse.quote(scoped_tq)
         url = f"https://api.github.com/search/repositories?q={encoded_tq}&sort=stars&order=desc&per_page=5"
         try:
-            payload = github_get_json(url, token, cache, rate_limit_info)
+            payload = github_get_json(url, token, cache, rate_limit_info, client=client)
             for item in payload.get("items", []):
                 if item.get("fork") or is_noise_repo(item):
                     continue
@@ -749,7 +833,7 @@ def scout_github(
     max_config_inspections = 4 if token else 2
     observed_stack_signals: dict[str, dict[str, Any]] = {}
     for repo in incumbents[:max_config_inspections]:
-        signals = inspect_repo_stack_configs(repo["full_name"], token, cache, rate_limit_info)
+        signals = inspect_repo_stack_configs(repo["full_name"], token, cache, rate_limit_info, client=client)
         repo["detected_configs"] = signals
         for sig in signals:
             key = f"{sig['category']}:{sig['tool']}"
@@ -783,7 +867,7 @@ def scout_github(
             issue_q = urllib.parse.quote(raw_q)
             issue_url = f"https://api.github.com/search/issues?q={issue_q}&per_page={issues_per_repo}"
             try:
-                issue_payload = github_get_json(issue_url, token, cache, rate_limit_info)
+                issue_payload = github_get_json(issue_url, token, cache, rate_limit_info, client=client)
                 for raw_issue in issue_payload.get("items", []):
                     if "pull_request" in raw_issue:
                         continue
@@ -822,6 +906,7 @@ def scout_github(
                 token,
                 cache,
                 rate_limit_info,
+                client=client,
             )
         cache.upsert_pain_point(pp)
 

@@ -96,10 +96,245 @@ def slugify(text: str, max_len: int = 60) -> str:
     return truncated.strip("-") or "decision"
 
 
+class GateVerdict:
+    """
+    Immutable value object representing the Readiness Gate evaluation.
+    Unpacks as `(score, unlocked, missing)` for backwards compatibility.
+    """
+
+    def __init__(
+        self,
+        score: int,
+        unlocked: bool,
+        missing: list[str] | tuple[str, ...],
+        is_draft: bool | None = None,
+    ) -> None:
+        self._score = int(score)
+        self._unlocked = bool(unlocked)
+        self._missing = tuple(missing)
+        self._is_draft = (not self._unlocked) if is_draft is None else bool(is_draft)
+
+    @property
+    def score(self) -> int:
+        return self._score
+
+    @property
+    def unlocked(self) -> bool:
+        return self._unlocked
+
+    @property
+    def missing(self) -> list[str]:
+        return list(self._missing)
+
+    @property
+    def is_draft(self) -> bool:
+        return self._is_draft
+
+    def __iter__(self):
+        yield self._score
+        yield self._unlocked
+        yield list(self._missing)
+
+    def __getitem__(self, index: int) -> Any:
+        return (self._score, self._unlocked, list(self._missing))[index]
+
+    def __repr__(self) -> str:
+        return f"GateVerdict(score={self._score}, unlocked={self._unlocked}, missing={len(self._missing)} items, is_draft={self._is_draft})"
+
+
+class ArtifactWatermarker:
+    """Unified watermarking pipeline for PreFlight specifications, stacks, blueprints, and tickets."""
+
+    @staticmethod
+    def title(title: str, is_draft: bool) -> str:
+        return f"[DRAFT] {title}" if is_draft else title
+
+    @staticmethod
+    def banner_markdown(is_draft: bool, doc_name: str = "document") -> list[str]:
+        if not is_draft:
+            return []
+        return [
+            f"> ⚠️ **DRAFT — READINESS GATE LOCKED:** This {doc_name} was exported before all PreFlight readiness requirements passed.",
+            "",
+        ]
+
+    @staticmethod
+    def ticket_status(is_draft: bool) -> str:
+        return "draft" if is_draft else "ready-for-agent"
+
+    @staticmethod
+    def ticket_banner_markdown(is_draft: bool) -> list[str]:
+        if not is_draft:
+            return []
+        return [
+            "> ⚠️ **DRAFT — DO NOT EXECUTE YET:** Exported via `--force` while Readiness Gate is locked.",
+            "",
+        ]
+
+
+class WorkspaceStore:
+    """
+    Manages `.preflight/` file paths, defaults, persistence, and reset lifecycle.
+    Prevents path leakage and eliminates loader side effects.
+    """
+
+    def __init__(self, workspace: Path | str) -> None:
+        self.workspace = Path(workspace).resolve()
+
+    @property
+    def preflight_dir(self) -> Path:
+        return self.workspace / ".preflight"
+
+    @property
+    def state_path(self) -> Path:
+        return self.preflight_dir / "state.json"
+
+    @property
+    def decisions_path(self) -> Path:
+        return self.preflight_dir / "decisions.json"
+
+    @property
+    def prior_art_path(self) -> Path:
+        return self.preflight_dir / "prior-art.json"
+
+    @property
+    def cache_path(self) -> Path:
+        return self.preflight_dir / "cache.db"
+
+    @property
+    def spec_path(self) -> Path:
+        return self.preflight_dir / "SPEC.md"
+
+    @property
+    def stack_path(self) -> Path:
+        return self.preflight_dir / "STACK.md"
+
+    @property
+    def issues_dir(self) -> Path:
+        return self.preflight_dir / "issues"
+
+    @property
+    def adr_dir(self) -> Path:
+        return self.workspace / "docs" / "adr"
+
+    @property
+    def blueprint_html_path(self) -> Path:
+        return self.workspace / "blueprint_report.html"
+
+    def ensure_preflight_dir(self) -> Path:
+        self.preflight_dir.mkdir(parents=True, exist_ok=True)
+        return self.preflight_dir
+
+    def load_state(self) -> dict[str, Any]:
+        if not self.state_path.exists():
+            state = default_state()
+            evaluate_gate(state, self.workspace)
+            return state
+        data = json.loads(self.state_path.read_text(encoding="utf-8"))
+        data.setdefault("tooling_recommendations", [])
+        mem = data.setdefault(
+            "memory_architecture",
+            {
+                "strategy": "",
+                "secondary_strategies": [],
+                "agent_communication_pattern": "",
+                "workflow_memory_flow": "",
+                "rationale": "",
+                "alternatives_considered": "",
+                "failure_modes": [],
+            },
+        )
+        mem.setdefault("secondary_strategies", [])
+        evaluate_gate(data, self.workspace)
+        return data
+
+    def save_state(self, state: dict[str, Any]) -> Path:
+        state["updated_at"] = now_iso()
+        status_clean(state, self.workspace)
+        self.ensure_preflight_dir()
+        self.state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+        # Keep STACK.md synchronized whenever tooling or memory exists
+        if state.get("tooling_recommendations") or (state.get("memory_architecture") or {}).get("strategy"):
+            verdict = evaluate_gate(state, self.workspace)
+            self.stack_path.write_text(build_stack_markdown(state, is_draft=verdict.is_draft) + "\n", encoding="utf-8")
+
+        return self.state_path
+
+    def load_decisions(self) -> list[dict[str, Any]]:
+        if not self.decisions_path.exists():
+            return []
+        try:
+            return json.loads(self.decisions_path.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+
+    def save_decisions(self, decisions: list[dict[str, Any]]) -> Path:
+        self.ensure_preflight_dir()
+        self.decisions_path.write_text(json.dumps(decisions, indent=2) + "\n", encoding="utf-8")
+        return self.decisions_path
+
+    def load_prior_art(self) -> dict[str, Any] | None:
+        if not self.prior_art_path.exists():
+            return None
+        try:
+            return json.loads(self.prior_art_path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+
+    def reset(
+        self,
+        purge_cache: bool = False,
+        clear_adrs: bool = True,
+        keep_adrs: bool | None = None,
+    ) -> list[str]:
+        if keep_adrs is not None:
+            clear_adrs = not keep_adrs
+        removed: list[str] = []
+        recorded_adr_files: list[str] = []
+        if clear_adrs and self.decisions_path.exists():
+            try:
+                decisions_data = json.loads(self.decisions_path.read_text(encoding="utf-8"))
+                if isinstance(decisions_data, list):
+                    for entry in decisions_data:
+                        if isinstance(entry, dict) and entry.get("file"):
+                            recorded_adr_files.append(str(entry["file"]))
+            except Exception:
+                pass
+
+        targets = [
+            self.state_path,
+            self.decisions_path,
+            self.prior_art_path,
+            self.spec_path,
+            self.stack_path,
+            self.blueprint_html_path,
+        ]
+        if purge_cache:
+            targets.append(self.cache_path)
+
+        for t in targets:
+            if t.exists():
+                t.unlink()
+                removed.append(str(t.relative_to(self.workspace)))
+
+        if clear_adrs and recorded_adr_files:
+            for rel_file in recorded_adr_files:
+                adr_file = (self.workspace / rel_file).resolve()
+                if adr_file.exists() and adr_file.is_relative_to(self.workspace.resolve()):
+                    adr_file.unlink()
+                    removed.append(str(adr_file.relative_to(self.workspace.resolve())))
+
+        if self.issues_dir.exists():
+            for issue_file in sorted(self.issues_dir.glob("*.md")):
+                issue_file.unlink()
+                removed.append(str(issue_file.relative_to(self.workspace)))
+
+        return removed
+
+
 def get_preflight_dir(workspace: Path) -> Path:
-    d = workspace / ".preflight"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    return WorkspaceStore(workspace).ensure_preflight_dir()
 
 
 def default_state(name: str = "", summary: str = "") -> dict[str, Any]:
@@ -148,6 +383,7 @@ def reset_workspace_state(
     workspace: Path,
     purge_cache: bool = False,
     clear_adrs: bool = True,
+    keep_adrs: bool | None = None,
 ) -> list[str]:
     """
     Delete all pre-performed scores, states, decisions, prior-art snapshots, and generated specs
@@ -155,78 +391,21 @@ def reset_workspace_state(
     Only deletes ADR markdown files explicitly listed in `.preflight/decisions.json` when `clear_adrs=True`,
     preserving any pre-existing repository ADRs in `docs/adr/`.
     """
-    removed: list[str] = []
-    preflight_dir = workspace / ".preflight"
-
-    # Read recorded ADR paths from decisions.json BEFORE unlinking decisions.json
-    recorded_adr_files: list[str] = []
-    decisions_path = preflight_dir / "decisions.json"
-    if clear_adrs and decisions_path.exists():
-        try:
-            decisions_data = json.loads(decisions_path.read_text(encoding="utf-8"))
-            if isinstance(decisions_data, list):
-                for entry in decisions_data:
-                    if isinstance(entry, dict) and entry.get("file"):
-                        recorded_adr_files.append(str(entry["file"]))
-        except Exception:
-            pass
-
-    targets = [
-        preflight_dir / "state.json",
-        decisions_path,
-        preflight_dir / "prior-art.json",
-        preflight_dir / "SPEC.md",
-        preflight_dir / "STACK.md",
-        workspace / "blueprint_report.html",
-    ]
-    if purge_cache:
-        targets.append(preflight_dir / "cache.db")
-
-    for t in targets:
-        if t.exists():
-            t.unlink()
-            removed.append(str(t.relative_to(workspace)))
-
-    if clear_adrs and recorded_adr_files:
-        for rel_file in recorded_adr_files:
-            adr_file = (workspace / rel_file).resolve()
-            if adr_file.exists() and adr_file.is_relative_to(workspace.resolve()):
-                adr_file.unlink()
-                removed.append(str(adr_file.relative_to(workspace.resolve())))
-
-    issues_dir = preflight_dir / "issues"
-    if issues_dir.exists():
-        for issue_file in sorted(issues_dir.glob("*.md")):
-            issue_file.unlink()
-            removed.append(str(issue_file.relative_to(workspace)))
-
-    return removed
+    return WorkspaceStore(workspace).reset(
+        purge_cache=purge_cache, clear_adrs=clear_adrs, keep_adrs=keep_adrs
+    )
 
 
 def load_prior_art(workspace: Path) -> dict[str, Any] | None:
-    path = workspace / ".preflight" / "prior-art.json"
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
+    return WorkspaceStore(workspace).load_prior_art()
 
 
 def load_decisions(workspace: Path) -> list[dict[str, Any]]:
-    path = get_preflight_dir(workspace) / "decisions.json"
-    if not path.exists():
-        return []
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return []
+    return WorkspaceStore(workspace).load_decisions()
 
 
 def save_decisions(workspace: Path, decisions: list[dict[str, Any]]) -> Path:
-    path = get_preflight_dir(workspace) / "decisions.json"
-    path.write_text(json.dumps(decisions, indent=2) + "\n", encoding="utf-8")
-    return path
+    return WorkspaceStore(workspace).save_decisions(decisions)
 
 
 def verify_config_proof(workspace: Path, config_proof: str, recommended: str = "") -> tuple[str, str]:
@@ -337,37 +516,16 @@ def evaluate_gate(state: dict[str, Any], workspace: Path | None = None) -> tuple
     state["readiness_score"] = total
     state["readiness_unlocked"] = unlocked
     state["missing_gate_requirements"] = missing
-    return total, unlocked, missing
+    return GateVerdict(score=total, unlocked=unlocked, missing=missing, is_draft=not unlocked)
 
 
 def compute_readiness(state: dict[str, Any], workspace: Path | None = None) -> tuple[int, bool]:
-    total, unlocked, _ = evaluate_gate(state, workspace)
-    return total, unlocked
+    verdict = evaluate_gate(state, workspace)
+    return verdict.score, verdict.unlocked
 
 
 def load_state(workspace: Path) -> dict[str, Any]:
-    path = get_preflight_dir(workspace) / "state.json"
-    if not path.exists():
-        state = default_state()
-        evaluate_gate(state, workspace)
-        return state
-    data = json.loads(path.read_text(encoding="utf-8"))
-    data.setdefault("tooling_recommendations", [])
-    mem = data.setdefault(
-        "memory_architecture",
-        {
-            "strategy": "",
-            "secondary_strategies": [],
-            "agent_communication_pattern": "",
-            "workflow_memory_flow": "",
-            "rationale": "",
-            "alternatives_considered": "",
-            "failure_modes": [],
-        },
-    )
-    mem.setdefault("secondary_strategies", [])
-    evaluate_gate(data, workspace)
-    return data
+    return WorkspaceStore(workspace).load_state()
 
 
 def strip_step_prefix(raw_step: str) -> str:
@@ -412,19 +570,13 @@ def build_stack_markdown(state: dict[str, Any], is_draft: bool | None = None) ->
     tools = state.get("tooling_recommendations") or []
     mem = state.get("memory_architecture") or {}
     draft = (not bool(state.get("readiness_unlocked", False))) if is_draft is None else is_draft
-    title_prefix = "[DRAFT] " if draft else ""
+    title = ArtifactWatermarker.title(f"Stack Explained & Memory Architecture: {project_name}", draft)
 
     lines = [
-        f"# {title_prefix}Stack Explained & Memory Architecture: {project_name}",
+        f"# {title}",
         "",
     ]
-    if draft:
-        lines.extend(
-            [
-                "> ⚠️ **DRAFT — READINESS GATE LOCKED:** This stack document was exported before all PreFlight readiness requirements passed.",
-                "",
-            ]
-        )
+    lines.extend(ArtifactWatermarker.banner_markdown(draft, doc_name="stack document"))
 
     lines.extend(
         [
@@ -475,18 +627,7 @@ def format_memory_architecture_lines(mem: dict[str, Any], failure_heading: str |
 
 
 def save_state(workspace: Path, state: dict[str, Any]) -> Path:
-    state["updated_at"] = now_iso()
-    status_clean(state, workspace)
-    preflight_dir = get_preflight_dir(workspace)
-    path = preflight_dir / "state.json"
-    path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
-
-    # Keep .preflight/STACK.md synchronized whenever tooling or memory architecture exists
-    if state.get("tooling_recommendations") or (state.get("memory_architecture") or {}).get("strategy"):
-        stack_md_path = preflight_dir / "STACK.md"
-        stack_md_path.write_text(build_stack_markdown(state) + "\n", encoding="utf-8")
-
-    return path
+    return WorkspaceStore(workspace).save_state(state)
 
 
 def status_clean(state: dict[str, Any], workspace: Path | None = None) -> dict[str, Any]:
@@ -756,14 +897,14 @@ def export_tickets_to_dir(
     When `is_draft` is True (e.g. exported via `--force` while Readiness Gate is locked), every ticket
     and `INDEX.md` is explicitly watermarked as `DRAFT` with status `draft`.
     """
-    target_dir = issues_dir or (get_preflight_dir(workspace) / "issues")
+    target_dir = issues_dir or WorkspaceStore(workspace).issues_dir
     target_dir.mkdir(parents=True, exist_ok=True)
     for old_f in target_dir.glob("*.md"):
         old_f.unlink()
 
-    _, unlocked, _ = evaluate_gate(state, workspace)
-    draft = (not unlocked) if is_draft is None else is_draft
-    status_label = "draft" if draft else "ready-for-agent"
+    verdict = evaluate_gate(state, workspace)
+    draft = verdict.is_draft if is_draft is None else is_draft
+    status_label = ArtifactWatermarker.ticket_status(draft)
     title_prefix = "[DRAFT] " if draft else ""
 
     project_name = state.get("project_name") or "Untitled Project"
@@ -836,13 +977,7 @@ def export_tickets_to_dir(
             f"# {ticket_id}",
             "",
         ]
-        if draft:
-            ticket_lines.extend(
-                [
-                    "> ⚠️ **DRAFT — DO NOT EXECUTE YET:** Exported via `--force` while Readiness Gate is locked.",
-                    "",
-                ]
-            )
+        ticket_lines.extend(ArtifactWatermarker.ticket_banner_markdown(draft))
         ticket_lines.extend(
             [
                 f"**What to build:** {what_to_build}",
@@ -922,6 +1057,287 @@ def format_scorecard(state: dict[str, Any], workspace: Path | None = None) -> st
         for m in missing:
             lines.append(f"- 🔒 {m}")
     return "\n".join(lines)
+
+
+class PreFlightOps:
+    """
+    Testable domain operations for PreFlight working state and architecture ledger.
+    Leaves CLI adapters thin and provides clean programmatic interfaces for tests.
+    Can be called as static methods or instantiated with a `WorkspaceStore` or workspace `Path`.
+    """
+
+    def __init__(self, workspace_or_store: Path | WorkspaceStore | str = ".") -> None:
+        if isinstance(workspace_or_store, WorkspaceStore):
+            self.store = workspace_or_store
+            self.workspace = self.store.workspace
+        else:
+            self.workspace = Path(workspace_or_store).resolve()
+            self.store = WorkspaceStore(self.workspace)
+
+    def get_scorecard(self) -> GateVerdict:
+        return evaluate_gate(self.store.load_state(), self.workspace)
+
+    @classmethod
+    def _resolve_workspace(cls, target: Any) -> tuple[Path, WorkspaceStore]:
+        if isinstance(target, PreFlightOps):
+            return target.workspace, target.store
+        if isinstance(target, WorkspaceStore):
+            return target.workspace, target
+        p = Path(target).resolve()
+        return p, WorkspaceStore(p)
+
+    def init_project(
+        workspace: Any,
+        name: str,
+        summary: str = "",
+        runtime: str = "",
+        stack: str = "",
+        reset: bool = False,
+        purge_cache: bool = False,
+        keep_adrs: bool = False,
+    ) -> tuple[dict[str, Any], GateVerdict, list[str]]:
+        workspace_path, store = PreFlightOps._resolve_workspace(workspace)
+        removed: list[str] = []
+        if reset:
+            removed = store.reset(purge_cache=purge_cache, clear_adrs=not keep_adrs)
+            state = default_state(name=name, summary=summary)
+        else:
+            if store.state_path.exists():
+                existing = store.load_state()
+                old_name = (existing.get("project_name") or "").strip()
+                if old_name and old_name != "Untitled Project" and old_name.lower() != name.strip().lower():
+                    print(
+                        f"NOTE: Existing state found for '{old_name}'. Use `init --reset` or `state.py reset` "
+                        "to wipe previous scores and decisions when starting a new idea.",
+                        file=sys.stderr,
+                    )
+                state = existing
+            else:
+                state = default_state(name=name, summary=summary)
+
+        state["project_name"] = name
+        if summary:
+            state["project_summary"] = summary
+        if runtime:
+            state["target_runtime"] = runtime
+        if stack:
+            state["tech_stack"] = [s.strip() for s in stack.split(",") if s.strip()]
+
+        store.save_state(state)
+        verdict = evaluate_gate(state, workspace_path)
+        return state, verdict, removed
+
+    def update_dimension(
+        workspace: Any,
+        dimension: str,
+        score: int,
+        summary: str,
+        edge_cases: list[str],
+    ) -> tuple[dict[str, Any], GateVerdict]:
+        workspace_path, store = PreFlightOps._resolve_workspace(workspace)
+        state = store.load_state()
+        d = state["dimensions"][dimension]
+        existing_ecs = list(d.get("edge_cases") or [])
+        for ec in edge_cases:
+            if ec.strip() and ec.strip() not in existing_ecs:
+                existing_ecs.append(ec.strip())
+
+        err = validate_dimension_evidence(
+            workspace=workspace_path,
+            dimension=dimension,
+            score=score,
+            summary=summary,
+            edge_cases=existing_ecs,
+            state=state,
+        )
+        if err:
+            raise ValueError(err)
+
+        d["score"] = score
+        d["summary"] = summary.strip()
+        d["edge_cases"] = existing_ecs
+        store.save_state(state)
+        verdict = evaluate_gate(state, workspace_path)
+        return state, verdict
+
+    def add_tool(
+        workspace: Any,
+        category: str,
+        purpose: str,
+        recommended: str,
+        why: str,
+        alternatives: str,
+        stage: str = "now",
+        config_proof: str = "",
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        workspace_path, store = PreFlightOps._resolve_workspace(workspace)
+        state = store.load_state()
+        tools = state.setdefault("tooling_recommendations", [])
+        proof_status, proof_source = verify_config_proof(
+            workspace=workspace_path,
+            config_proof=config_proof,
+            recommended=recommended,
+        )
+        entry = {
+            "category": category,
+            "purpose": purpose.strip(),
+            "recommended": recommended.strip(),
+            "why": why.strip(),
+            "alternatives": alternatives.strip(),
+            "stage": stage,
+            "config_proof": config_proof.strip(),
+            "proof_status": proof_status,
+            "proof_source": proof_source,
+        }
+        replaced = False
+        for idx, existing in enumerate(tools):
+            if (
+                existing.get("category") == entry["category"]
+                and existing.get("purpose", "").lower() == entry["purpose"].lower()
+            ):
+                tools[idx] = entry
+                replaced = True
+                break
+        if not replaced:
+            tools.append(entry)
+
+        store.save_state(state)
+        return state, entry
+
+    def set_memory_architecture(
+        workspace: Any,
+        strategy: str,
+        communication: str,
+        rationale: str,
+        alternatives: str = "",
+        failure_modes: list[str] | None = None,
+        secondary_strategies: list[str] | None = None,
+        workflow: str = "",
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        workspace_path, store = PreFlightOps._resolve_workspace(workspace)
+        state = store.load_state()
+        mem = state.setdefault("memory_architecture", {})
+        existing_fms = list(mem.get("failure_modes") or [])
+        for fm in failure_modes or []:
+            if fm.strip() and fm.strip() not in existing_fms:
+                existing_fms.append(fm.strip())
+        if not existing_fms:
+            raise ValueError(
+                "`set-memory-arch` requires at least 1 `--failure-mode` describing an anticipated memory failure and mitigation."
+            )
+
+        existing_secs = list(mem.get("secondary_strategies") or [])
+        for sec in secondary_strategies or []:
+            if sec.strip() and sec.strip() != strategy and sec.strip() not in existing_secs:
+                existing_secs.append(sec.strip())
+
+        mem["strategy"] = strategy
+        mem["secondary_strategies"] = existing_secs
+        mem["agent_communication_pattern"] = communication.strip()
+        if workflow:
+            mem["workflow_memory_flow"] = workflow.strip()
+        mem["rationale"] = rationale.strip()
+        if alternatives:
+            mem["alternatives_considered"] = alternatives.strip()
+        mem["failure_modes"] = existing_fms
+        store.save_state(state)
+        return state, mem
+
+    def add_critique(
+        workspace: Any,
+        title: str,
+        severity: str,
+        attack: str,
+        mitigation: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        workspace_path, store = PreFlightOps._resolve_workspace(workspace)
+        state = store.load_state()
+        entry = {
+            "title": title.strip(),
+            "severity": severity.strip(),
+            "attack": attack.strip(),
+            "mitigation": mitigation.strip(),
+        }
+        state.setdefault("red_team_critiques", []).append(entry)
+        store.save_state(state)
+        return state, entry
+
+    def add_decision(
+        workspace: Any,
+        title: str,
+        decision: str,
+        rejected: str = "",
+        rationale: str = "",
+        dimension: str = "",
+        write_markdown: bool = True,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        workspace_path, store = PreFlightOps._resolve_workspace(workspace)
+        entry = record_adr(
+            workspace=workspace_path,
+            title=title,
+            decision=decision,
+            rejected=rejected,
+            rationale=rationale,
+            dimension=dimension,
+            write_markdown=write_markdown,
+        )
+        state = store.load_state()
+        store.save_state(state)
+        return state, entry
+
+    def set_system_design(
+        workspace: Any,
+        topology: str = "",
+        topology_file: str = "",
+        sequence: str = "",
+        sequence_file: str = "",
+        options: list[str] | None = None,
+        steps: list[str] | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        workspace_path, store = PreFlightOps._resolve_workspace(workspace)
+        state = store.load_state()
+        sys_design = state.setdefault(
+            "system_design",
+            {
+                "topology_mermaid": "",
+                "sequence_mermaid": "",
+                "options_matrix": [],
+                "implementation_steps": [],
+            },
+        )
+        if topology_file:
+            sys_design["topology_mermaid"] = Path(topology_file).read_text(encoding="utf-8").strip()
+        elif topology:
+            sys_design["topology_mermaid"] = topology.strip()
+
+        if sequence_file:
+            sys_design["sequence_mermaid"] = Path(sequence_file).read_text(encoding="utf-8").strip()
+        elif sequence:
+            sys_design["sequence_mermaid"] = sequence.strip()
+
+        if options:
+            parsed_options = []
+            for raw_opt in options:
+                parts = [p.strip() for p in raw_opt.split("|")]
+                if len(parts) != 4:
+                    raise ValueError(
+                        f"--option must have 4 pipe-separated fields 'Option|Pros|Cons|Verdict'; got: {raw_opt}"
+                    )
+                parsed_options.append(
+                    {
+                        "option": parts[0],
+                        "pros": parts[1],
+                        "cons": parts[2],
+                        "verdict": parts[3],
+                    }
+                )
+            sys_design["options_matrix"] = parsed_options
+
+        if steps:
+            sys_design["implementation_steps"] = [s.strip() for s in steps if s.strip()]
+
+        store.save_state(state)
+        return state, sys_design
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1095,8 +1511,7 @@ def main(argv: list[str] | None = None) -> int:
     workspace = Path(args.workspace).resolve()
 
     if args.cmd == "reset":
-        removed = reset_workspace_state(
-            workspace=workspace,
+        removed = WorkspaceStore(workspace).reset(
             purge_cache=args.purge_cache,
             clear_adrs=not args.keep_adrs,
         )
@@ -1107,160 +1522,91 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "init":
-        if args.reset:
-            reset_workspace_state(
-                workspace=workspace,
-                purge_cache=args.purge_cache,
-                clear_adrs=not args.keep_adrs,
-            )
-            state = default_state(name=args.name, summary=args.summary)
-        else:
-            existing_path = get_preflight_dir(workspace) / "state.json"
-            if existing_path.exists():
-                existing = load_state(workspace)
-                old_name = (existing.get("project_name") or "").strip()
-                # If switching to a different project name without --reset, warn clearly
-                if old_name and old_name != "Untitled Project" and old_name.lower() != args.name.strip().lower():
-                    print(
-                        f"NOTE: Existing state found for '{old_name}'. Use `init --reset` or `state.py reset` "
-                        "to wipe previous scores and decisions when starting a new idea.",
-                        file=sys.stderr,
-                    )
-                state = existing
-            else:
-                state = default_state(name=args.name, summary=args.summary)
-
-        state["project_name"] = args.name
-        if args.summary:
-            state["project_summary"] = args.summary
-        if args.runtime:
-            state["target_runtime"] = args.runtime
-        if args.stack:
-            state["tech_stack"] = [s.strip() for s in args.stack.split(",") if s.strip()]
-        save_state(workspace, state)
+        state, _, _ = PreFlightOps.init_project(
+            workspace=workspace,
+            name=args.name,
+            summary=args.summary,
+            runtime=args.runtime,
+            stack=args.stack,
+            reset=args.reset,
+            purge_cache=args.purge_cache,
+            keep_adrs=args.keep_adrs,
+        )
         print(format_scorecard(state, workspace))
         return 0
 
     if args.cmd == "update-dimension":
-        state = load_state(workspace)
-        d = state["dimensions"][args.dimension]
-        existing_ecs = list(d.get("edge_cases") or [])
-        for ec in args.edge_case:
-            if ec.strip() and ec.strip() not in existing_ecs:
-                existing_ecs.append(ec.strip())
-
-        err = validate_dimension_evidence(
-            workspace=workspace,
-            dimension=args.dimension,
-            score=args.score,
-            summary=args.summary,
-            edge_cases=existing_ecs,
-            state=state,
-        )
-        if err:
+        try:
+            state, _ = PreFlightOps.update_dimension(
+                workspace=workspace,
+                dimension=args.dimension,
+                score=args.score,
+                summary=args.summary,
+                edge_cases=args.edge_case,
+            )
+        except ValueError as err:
             print(f"ERROR: {err}", file=sys.stderr)
             return 2
-
-        d["score"] = args.score
-        d["summary"] = args.summary.strip()
-        d["edge_cases"] = existing_ecs
-        save_state(workspace, state)
         print(format_scorecard(state, workspace))
         return 0
 
     if args.cmd == "add-tool":
-        state = load_state(workspace)
-        tools = state.setdefault("tooling_recommendations", [])
-        proof_status, proof_source = verify_config_proof(
+        state, entry = PreFlightOps.add_tool(
             workspace=workspace,
-            config_proof=args.config_proof,
+            category=args.category,
+            purpose=args.purpose,
             recommended=args.recommended,
+            why=args.why,
+            alternatives=args.alternatives,
+            stage=args.stage,
+            config_proof=args.config_proof,
         )
-        entry = {
-            "category": args.category,
-            "purpose": args.purpose.strip(),
-            "recommended": args.recommended.strip(),
-            "why": args.why.strip(),
-            "alternatives": args.alternatives.strip(),
-            "stage": args.stage,
-            "config_proof": args.config_proof.strip(),
-            "proof_status": proof_status,
-            "proof_source": proof_source,
-        }
-        if proof_status != "verified" and args.config_proof.strip():
+        if entry["proof_status"] != "verified" and args.config_proof.strip():
             print(
                 f"WARNING: Config proof '{args.config_proof.strip()}' for '{args.recommended.strip()}' was not found "
                 "in `.preflight/prior-art.json` (`observed_stack_configs`) or workspace files; marked as `claimed-unverified`.",
                 file=sys.stderr,
             )
-        # Replace if same category + purpose already exists, otherwise append
-        replaced = False
-        for idx, existing in enumerate(tools):
-            if (
-                existing.get("category") == entry["category"]
-                and existing.get("purpose", "").lower() == entry["purpose"].lower()
-            ):
-                tools[idx] = entry
-                replaced = True
-                break
-        if not replaced:
-            tools.append(entry)
-        save_state(workspace, state)
         print(
-            f"Recorded Stack Explained [{entry['stage'].upper()}] [{entry['category']}] ({proof_status}): "
+            f"Recorded Stack Explained [{entry['stage'].upper()}] [{entry['category']}] ({entry['proof_status']}): "
             f"{entry['recommended']} ({entry['purpose']})"
         )
         return 0
 
     if args.cmd == "set-memory-arch":
-        state = load_state(workspace)
-        mem = state.setdefault("memory_architecture", {})
-        existing_fms = list(mem.get("failure_modes") or [])
-        for fm in args.failure_mode:
-            if fm.strip() and fm.strip() not in existing_fms:
-                existing_fms.append(fm.strip())
-        if not existing_fms:
-            print(
-                "ERROR: `set-memory-arch` requires at least 1 `--failure-mode` describing an anticipated memory failure and mitigation.",
-                file=sys.stderr,
+        try:
+            state, mem = PreFlightOps.set_memory_architecture(
+                workspace=workspace,
+                strategy=args.strategy,
+                communication=args.communication,
+                rationale=args.rationale,
+                alternatives=args.alternatives,
+                failure_modes=args.failure_mode,
+                secondary_strategies=args.secondary_strategy,
+                workflow=args.workflow,
             )
+        except ValueError as err:
+            print(f"ERROR: {err}", file=sys.stderr)
             return 2
-        existing_secs = list(mem.get("secondary_strategies") or [])
-        for sec in args.secondary_strategy:
-            if sec.strip() and sec.strip() != args.strategy and sec.strip() not in existing_secs:
-                existing_secs.append(sec.strip())
-        mem["strategy"] = args.strategy
-        mem["secondary_strategies"] = existing_secs
-        mem["agent_communication_pattern"] = args.communication.strip()
-        if args.workflow:
-            mem["workflow_memory_flow"] = args.workflow.strip()
-        mem["rationale"] = args.rationale.strip()
-        if args.alternatives:
-            mem["alternatives_considered"] = args.alternatives.strip()
-        mem["failure_modes"] = existing_fms
-        save_state(workspace, state)
         print(
             f"Updated memory_architecture: strategy={format_memory_strategy_display(mem)} "
-            f"({len(existing_fms)} failure modes tracked)"
+            f"({len(mem.get('failure_modes', []))} failure modes tracked)"
         )
         return 0
 
     if args.cmd == "add-critique":
-        state = load_state(workspace)
-        state.setdefault("red_team_critiques", []).append(
-            {
-                "title": args.title,
-                "severity": args.severity,
-                "attack": args.attack,
-                "mitigation": args.mitigation,
-            }
+        state, entry = PreFlightOps.add_critique(
+            workspace=workspace,
+            title=args.title,
+            severity=args.severity,
+            attack=args.attack,
+            mitigation=args.mitigation,
         )
-        save_state(workspace, state)
-        print(f"Added critique: {args.title} ({args.severity})")
+        print(f"Added critique: {entry['title']} ({entry['severity']})")
         return 0
 
     if args.cmd == "add-decision":
-        entry = record_adr(
+        state, entry = PreFlightOps.add_decision(
             workspace=workspace,
             title=args.title,
             decision=args.decision,
@@ -1269,61 +1615,28 @@ def main(argv: list[str] | None = None) -> int:
             dimension=args.dimension,
             write_markdown=not args.no_markdown,
         )
-        state = load_state(workspace)
-        save_state(workspace, state)
         print(json.dumps(entry, indent=2))
         return 0
 
     if args.cmd == "set-design":
-        state = load_state(workspace)
-        sys_design = state.setdefault(
-            "system_design",
-            {
-                "topology_mermaid": "",
-                "sequence_mermaid": "",
-                "options_matrix": [],
-                "implementation_steps": [],
-            },
-        )
-        if args.topology_file:
-            sys_design["topology_mermaid"] = Path(args.topology_file).read_text(encoding="utf-8").strip()
-        elif args.topology:
-            sys_design["topology_mermaid"] = args.topology.strip()
-
-        if args.sequence_file:
-            sys_design["sequence_mermaid"] = Path(args.sequence_file).read_text(encoding="utf-8").strip()
-        elif args.sequence:
-            sys_design["sequence_mermaid"] = args.sequence.strip()
-
-        if args.option:
-            parsed_options = []
-            for raw_opt in args.option:
-                parts = [p.strip() for p in raw_opt.split("|")]
-                if len(parts) != 4:
-                    print(
-                        f"ERROR: --option must have 4 pipe-separated fields 'Option|Pros|Cons|Verdict'; got: {raw_opt}",
-                        file=sys.stderr,
-                    )
-                    return 2
-                parsed_options.append(
-                    {
-                        "option": parts[0],
-                        "pros": parts[1],
-                        "cons": parts[2],
-                        "verdict": parts[3],
-                    }
-                )
-            sys_design["options_matrix"] = parsed_options
-
-        if args.step:
-            sys_design["implementation_steps"] = [s.strip() for s in args.step if s.strip()]
-
-        save_state(workspace, state)
+        try:
+            state, _ = PreFlightOps.set_system_design(
+                workspace=workspace,
+                topology=args.topology,
+                topology_file=args.topology_file,
+                sequence=args.sequence,
+                sequence_file=args.sequence_file,
+                options=args.option,
+                steps=args.step,
+            )
+        except ValueError as err:
+            print(f"ERROR: {err}", file=sys.stderr)
+            return 2
         print("Updated system_design in .preflight/state.json")
         return 0
 
     if args.cmd == "status":
-        state = load_state(workspace)
+        state = WorkspaceStore(workspace).load_state()
         if args.json:
             print(json.dumps(state, indent=2))
         else:
@@ -1331,18 +1644,18 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "export-tickets":
-        state = load_state(workspace)
-        score, unlocked, missing = evaluate_gate(state, workspace)
-        if not unlocked and not args.force:
+        state = WorkspaceStore(workspace).load_state()
+        verdict = evaluate_gate(state, workspace)
+        if not verdict.unlocked and not args.force:
             print(
-                f"ERROR: Readiness Gate is LOCKED ({score}% / 80% required). Pass `--force` to export draft tickets anyway.\n"
-                + "\n".join(f"  - {m}" for m in missing),
+                f"ERROR: Readiness Gate is LOCKED ({verdict.score}% / 80% required). Pass `--force` to export draft tickets anyway.\n"
+                + "\n".join(f"  - {m}" for m in verdict.missing),
                 file=sys.stderr,
             )
             return 2
-        is_draft = not unlocked
-        decisions = load_decisions(workspace)
-        out_dir = Path(args.output_dir).resolve() if args.output_dir else (get_preflight_dir(workspace) / "issues")
+        is_draft = not verdict.unlocked
+        decisions = WorkspaceStore(workspace).load_decisions()
+        out_dir = Path(args.output_dir).resolve() if args.output_dir else WorkspaceStore(workspace).issues_dir
         created = export_tickets_to_dir(workspace, state, decisions, issues_dir=out_dir, is_draft=is_draft)
         draft_note = " [DRAFT — Readiness Gate Locked]" if is_draft else ""
         print(f"Exported {len(created)} ordered ticket file(s){draft_note} to {out_dir}:")

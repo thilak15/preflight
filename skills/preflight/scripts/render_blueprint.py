@@ -35,6 +35,9 @@ from typing import Any
 from state import (
     DIMENSIONS,
     DIMENSION_LABELS,
+    ArtifactWatermarker,
+    GateVerdict,
+    WorkspaceStore,
     build_stack_markdown,
     evaluate_gate,
     export_tickets_to_dir,
@@ -79,20 +82,14 @@ def build_spec_markdown(
     readiness_score = int(state.get("readiness_score", 0))
     unlocked = bool(state.get("readiness_unlocked", False))
     draft = (not unlocked) if is_draft is None else is_draft
-    title_prefix = "[DRAFT] " if draft else ""
+    title = ArtifactWatermarker.title(f"System Design Specification: {project_name}", draft)
     readiness_badge = "DRAFT — Readiness Gate Bypassed via `--force`" if draft else "Evidence-Verified"
 
     lines = [
-        f"# {title_prefix}System Design Specification: {project_name}",
+        f"# {title}",
         "",
     ]
-    if draft:
-        lines.extend(
-            [
-                "> ⚠️ **DRAFT SPECIFICATION — READINESS GATE LOCKED:** This document was generated using `--force` before all PreFlight Readiness Gate checks passed. Do not treat as an approved production spec.",
-                "",
-            ]
-        )
+    lines.extend(ArtifactWatermarker.banner_markdown(draft, doc_name="specification"))
     lines.extend(
         [
             f"- **Readiness Score:** {readiness_score}% ({readiness_badge})",
@@ -970,14 +967,15 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     workspace = Path(args.workspace).resolve()
-    state = load_state(workspace)
-    score, unlocked, missing = evaluate_gate(state, workspace)
+    store = WorkspaceStore(workspace)
+    state = store.load_state()
+    verdict = evaluate_gate(state, workspace)
 
-    if not unlocked and not args.force:
+    if not verdict.unlocked and not args.force:
         print(
-            f"ERROR: Readiness Gate is LOCKED ({score}% / 80% required).\n"
+            f"ERROR: Readiness Gate is LOCKED ({verdict.score}% / 80% required).\n"
             "Missing gate requirements:\n"
-            + "\n".join(f"  - {m}" for m in missing),
+            + "\n".join(f"  - {m}" for m in verdict.missing),
             file=sys.stderr,
         )
         return 2
@@ -995,8 +993,8 @@ def main(argv: list[str] | None = None) -> int:
         sequence_mermaid = "sequenceDiagram\n    Note over User: Draft Sequence (Pending set-design)"
         sys_design["sequence_mermaid"] = sequence_mermaid
 
-    is_draft = not unlocked
-    decisions = load_decisions(workspace)
+    is_draft = not verdict.unlocked
+    decisions = store.load_decisions()
     prior_art = load_prior_art(workspace)
     spec_md = build_spec_markdown(state, decisions, prior_art, is_draft=is_draft)
     html_content = build_html(state, decisions, prior_art, spec_md)
@@ -1009,7 +1007,7 @@ def main(argv: list[str] | None = None) -> int:
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text(spec_md + "\n", encoding="utf-8")
 
-    stack_path = workspace / ".preflight" / "STACK.md"
+    stack_path = store.stack_path
     stack_path.parent.mkdir(parents=True, exist_ok=True)
     stack_path.write_text(build_stack_markdown(state, is_draft=is_draft) + "\n", encoding="utf-8")
 
@@ -1018,7 +1016,7 @@ def main(argv: list[str] | None = None) -> int:
     draft_tag = " [DRAFT]" if is_draft else ""
     print(
         f"Blueprint rendered{draft_tag}: {out_path} | Spec exported: {spec_path} | Stack exported: {stack_path} | "
-        f"Tickets exported: {len(ticket_files)} in .preflight/issues/ (Readiness: {score}%)"
+        f"Tickets exported: {len(ticket_files)} in .preflight/issues/ (Readiness: {verdict.score}%)"
     )
     return 0
 

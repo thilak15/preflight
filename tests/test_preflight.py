@@ -820,5 +820,254 @@ class TestPreFlightPipeline(unittest.TestCase):
         self.assertIn("is a symlink into this repo", res_guard.stderr)
 
 
+class TestArchitectureDeepening(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.workspace = Path(self.tmp.name)
+        self.store = state.WorkspaceStore(self.workspace)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_gate_verdict_value_object(self) -> None:
+        # Immutable value object
+        verdict = state.GateVerdict(score=75, unlocked=False, missing=["Need 80%"], is_draft=True)
+        self.assertEqual(verdict.score, 75)
+        self.assertFalse(verdict.unlocked)
+        self.assertTrue(verdict.is_draft)
+        self.assertEqual(verdict.missing, ["Need 80%"])
+        with self.assertRaises(Exception):
+            verdict.score = 80  # frozen dataclass
+
+        # Backwards compatible tuple unpacking
+        score, unlocked, missing = verdict
+        self.assertEqual(score, 75)
+        self.assertFalse(unlocked)
+        self.assertEqual(missing, ["Need 80%"])
+
+    def test_artifact_watermarker(self) -> None:
+        # Draft watermarking
+        self.assertEqual(state.ArtifactWatermarker.title("System Spec", is_draft=True), "[DRAFT] System Spec")
+        draft_banner = "\n".join(state.ArtifactWatermarker.banner_markdown(is_draft=True, doc_name="Specification"))
+        self.assertIn("DRAFT — READINESS GATE LOCKED", draft_banner)
+        self.assertEqual(state.ArtifactWatermarker.ticket_status(is_draft=True), "draft")
+        ticket_banner = "\n".join(state.ArtifactWatermarker.ticket_banner_markdown(is_draft=True))
+        self.assertIn("DRAFT — DO NOT EXECUTE YET", ticket_banner)
+
+        # Verified watermarking
+        self.assertEqual(state.ArtifactWatermarker.title("System Spec", is_draft=False), "System Spec")
+        self.assertEqual(state.ArtifactWatermarker.banner_markdown(is_draft=False), [])
+        self.assertEqual(state.ArtifactWatermarker.ticket_status(is_draft=False), "ready-for-agent")
+        self.assertEqual(state.ArtifactWatermarker.ticket_banner_markdown(is_draft=False), [])
+
+    def test_workspace_store_paths_and_lifecycle(self) -> None:
+        # Layout properties
+        root = self.workspace.resolve()
+        self.assertEqual(self.store.preflight_dir, root / ".preflight")
+        self.assertEqual(self.store.state_path, root / ".preflight" / "state.json")
+        self.assertEqual(self.store.decisions_path, root / ".preflight" / "decisions.json")
+        self.assertEqual(self.store.prior_art_path, root / ".preflight" / "prior-art.json")
+        self.assertEqual(self.store.cache_path, root / ".preflight" / "cache.db")
+        self.assertEqual(self.store.spec_path, root / ".preflight" / "SPEC.md")
+        self.assertEqual(self.store.stack_path, root / ".preflight" / "STACK.md")
+        self.assertEqual(self.store.issues_dir, root / ".preflight" / "issues")
+        self.assertEqual(self.store.adr_dir, root / "docs" / "adr")
+
+        # Load empty state returns default schema without creating directory
+        st = self.store.load_state()
+        self.assertEqual(st["project_name"], "Untitled Project")
+
+        # Save and atomic load state
+        st["project_name"] = "DeepenedStoreTest"
+        self.store.save_state(st)
+        self.assertTrue(self.store.state_path.exists())
+        loaded = self.store.load_state()
+        self.assertEqual(loaded["project_name"], "DeepenedStoreTest")
+
+        # Decisions lifecycle
+        decs = self.store.load_decisions()
+        self.assertEqual(decs, [])
+        self.store.save_decisions([{"id": "ADR-0001", "file": "docs/adr/0001-test.md"}])
+        self.assertEqual(len(self.store.load_decisions()), 1)
+
+        # Safe reset removes state, decisions, and tracked ADRs, but preserves cache.db and pre-existing ADRs
+        (self.workspace / "docs" / "adr").mkdir(parents=True, exist_ok=True)
+        tracked_adr = self.workspace / "docs" / "adr" / "0001-test.md"
+        tracked_adr.write_text("tracked adr", encoding="utf-8")
+        pre_existing_adr = self.workspace / "docs" / "adr" / "0000-pre-existing.md"
+        pre_existing_adr.write_text("keep me", encoding="utf-8")
+        cache_file = self.store.cache_path
+        cache_file.write_text("sqlite placeholder", encoding="utf-8")
+
+        removed = self.store.reset(keep_adrs=False)
+        self.assertFalse(self.store.state_path.exists())
+        self.assertFalse(self.store.decisions_path.exists())
+        self.assertFalse(tracked_adr.exists())
+        self.assertTrue(pre_existing_adr.exists())
+        self.assertTrue(cache_file.exists())
+        self.assertIn("docs/adr/0001-test.md", removed)
+
+    def test_preflight_ops_domain_operations(self) -> None:
+        ops = state.PreFlightOps(self.store)
+
+        # Init project
+        st, verdict, removed = ops.init_project("DomainOpsTest", reset=False)
+        self.assertEqual(st["project_name"], "DomainOpsTest")
+        self.assertEqual(ops.get_scorecard().score, 0)
+
+        # Update dimension with evidence validation
+        st, verdict = ops.update_dimension(
+            dimension="problem",
+            score=20,
+            summary="Rigorous architectural pain point explanation that is well over 20 characters.",
+            edge_cases=["Edge case 1: race conditions in async queue", "Edge case 2: network timeout recovery"],
+        )
+        self.assertEqual(st["dimensions"]["problem"]["score"], 20)
+
+        # Add tool to Stack Explained
+        st, entry = ops.add_tool(
+            category="dependency-lock",
+            purpose="Deterministic package resolution",
+            recommended="uv",
+            why="Instant virtualenvs and cross-platform lockfiles",
+            stage="now",
+            alternatives="pip-tools, poetry",
+            config_proof="pyproject.toml with uv.lock",
+        )
+        self.assertEqual(len(st["tooling_recommendations"]), 1)
+        self.assertEqual(st["tooling_recommendations"][0]["recommended"], "uv")
+
+        # Set memory architecture
+        st, mem = ops.set_memory_architecture(
+            strategy="transactional-db",
+            communication="Synchronous internal messaging",
+            workflow="Ephemeral workspace state stored in SQLite",
+            rationale="ACID guarantees without distributed consensus",
+            alternatives="stateless, redis",
+            failure_modes=["SQLite locked on concurrent writes; mitigated with WAL mode"],
+            secondary_strategies=["lexical-fts"],
+        )
+        self.assertEqual(st["memory_architecture"]["strategy"], "transactional-db")
+        self.assertEqual(st["memory_architecture"]["secondary_strategies"], ["lexical-fts"])
+
+        # Add red-team critique
+        st, entry = ops.add_critique(
+            title="Single SQLite scaling",
+            severity="high",
+            attack="Single SQLite instance cannot scale horizontally across pods.",
+            mitigation="Edge runtime model pins one database per node by design.",
+        )
+        self.assertEqual(len(st["red_team_critiques"]), 1)
+
+        # Add decision
+        st, dec = ops.add_decision(
+            title="Use SQLite WAL Mode",
+            decision="Enable PRAGMA journal_mode=WAL on connection init",
+            rejected="Rollback journal",
+            rationale="Allows concurrent readers without blocking writers",
+            dimension="memory",
+        )
+        self.assertEqual(dec["title"], "Use SQLite WAL Mode")
+        self.assertTrue((self.workspace / dec["file"]).exists())
+
+        # Set system design
+        st, sys_design = ops.set_system_design(
+            topology="graph TD\nA-->B",
+            sequence="sequenceDiagram\nA->>B: ping",
+        )
+        self.assertEqual(st["system_design"]["topology_mermaid"], "graph TD\nA-->B")
+
+    def test_scout_github_with_fake_github_client_seam(self) -> None:
+        # Offline testing of scout_github via FakeGitHubClient without mocking urllib
+        fake_client = scout.FakeGitHubClient()
+
+        # Seed repository search
+        fake_client.add_handler(
+            lambda url: "/search/repositories" in url and "fast-queue" in url,
+            {
+                "items": [
+                    {
+                        "full_name": "acme/fast-queue",
+                        "html_url": "https://github.com/acme/fast-queue",
+                        "description": "High throughput async queue",
+                        "stargazers_count": 1200,
+                        "forks_count": 80,
+                        "open_issues_count": 3,
+                        "has_issues": True,
+                        "language": "Python",
+                        "topics": ["queue", "async"],
+                        "created_at": "2025-01-01T00:00:00Z",
+                        "pushed_at": "2026-10-25T00:00:00Z",
+                        "archived": False,
+                    }
+                ]
+            },
+        )
+
+        # Seed contents inspection
+        fake_client.set_response(
+            "https://api.github.com/repos/acme/fast-queue/contents",
+            [{"name": "pyproject.toml"}, {"name": "Dockerfile"}],
+        )
+
+        pyproject_bytes = b"[tool.uv]\ndev-dependencies = ['pytest']\n"
+        pyproject_b64 = base64.b64encode(pyproject_bytes).decode("ascii")
+        fake_client.set_response(
+            "https://api.github.com/repos/acme/fast-queue/contents/pyproject.toml",
+            {"content": pyproject_b64},
+        )
+
+        # Seed issue search & comments
+        fake_client.add_handler(
+            lambda url: "/search/issues" in url,
+            {
+                "items": [
+                    {
+                        "number": 10,
+                        "title": "Deadlock during consumer rebalance",
+                        "html_url": "https://github.com/acme/fast-queue/issues/10",
+                        "body": "Rebalancing workers hangs on lock acquisition.",
+                        "reactions": {"+1": 8, "total_count": 8},
+                        "comments": 2,
+                        "created_at": "2026-09-01T00:00:00Z",
+                    }
+                ]
+            },
+        )
+
+        fake_client.set_response(
+            "https://api.github.com/repos/acme/fast-queue/issues/10/comments?per_page=15",
+            [
+                {
+                    "user": {"login": "concurrency-expert"},
+                    "body": "Use asymmetric lock timeouts to break deadlocks.",
+                    "reactions": {"+1": 5, "total_count": 5},
+                }
+            ],
+        )
+
+        cache = scout.RepoCache(self.store.cache_path)
+        try:
+            report = scout.scout_github(
+                queries=["fast-queue"],
+                cache=cache,
+                token=None,
+                auth_source="unauthenticated",
+                client=fake_client,
+            )
+        finally:
+            cache.close()
+
+        self.assertEqual(len(report["active_incumbents"]), 1)
+        self.assertEqual(report["active_incumbents"][0]["full_name"], "acme/fast-queue")
+        observed_tools = {sig["tool"] for sig in report["observed_stack_configs"]}
+        self.assertIn("uv", observed_tools)
+        self.assertIn("Docker (Dockerfile)", observed_tools)
+        self.assertEqual(len(report["pain_points"]), 1)
+        self.assertEqual(report["pain_points"][0]["top_comments"][0]["author"], "concurrency-expert")
+        # Ensure FakeGitHubClient recorded the calls
+        self.assertGreater(len(fake_client.calls), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
