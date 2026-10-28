@@ -1,26 +1,30 @@
 #!/usr/bin/env python3
 """
-PreFlight GitHub Deep-Scout & Pain-Point Miner (`scripts/scout.py`).
+PreFlight GitHub Deep-Scout, Config-File Stack Inspector & Pain-Point Miner (`scripts/scout.py`).
 
 Responsibilities:
 1. Authenticate via `gh auth token` -> `GITHUB_TOKEN` -> unauthenticated fallback.
 2. Inspect GitHub API rate-limit headers (`X-RateLimit-Remaining`, `X-RateLimit-Reset`, `Retry-After`)
    for the Search API (30 req/min authenticated, 10 req/min unauthenticated).
-3. Cache all GitHub API repository, issue, and comment responses in `.preflight/cache.db` (SQLite3, 7-day TTL).
-4. Classify discovered repositories into:
+3. Cache all GitHub API repository, contents, issue, and comment responses in `.preflight/cache.db` (SQLite3, 7-day TTL).
+4. Classify discovered competitor repositories (`-q`) into:
    - Active Incumbents (pushed within last 365 days and not archived)
    - Graveyard / Dormant Repos (archived by maintainer, or no pushes in >365 days)
-5. Mine Pain Points with real engagement thresholds:
-   - Pass A: Top-voted open issues (`sort:reactions-+1-desc`)
-   - Pass B: Bug & architecture failure open issues (`label:bug` + failure mode sort)
-   - Enforces minimum engagement (`reactions_plus_one >= 1` or `comments_count >= 2`) so 0-vote noise is excluded.
-   - Fetches top-voted comments (`top_comments`) on the highest-signal issues to capture user quotes and workarounds.
-6. Write structured output to `.preflight/prior-art.json` and print a compact Markdown digest.
+5. Inspect repository config files ("Stack Explained" evidence) across top incumbents:
+   - Checks root directory contents (and `pyproject.toml` when present) for empirical proof of tools used:
+     `pyproject.toml` (`[tool.poetry]`, `[tool.uv]`, `[tool.ruff]`), `uv.lock`, `poetry.lock`,
+     `Dockerfile`, `docker-compose.yml`, `.github/workflows`, `.pre-commit-config.yaml`, `Cargo.lock`,
+     `go.sum`, `pnpm-lock.yaml`, `Chart.yaml` / `k8s/`, `Makefile`, etc.
+6. Scout Open-Source Building Blocks & Tooling (`--tool-query` / `-t`) to build the project.
+7. Mine Pain Points with real engagement thresholds (`reactions_plus_one >= 1` or `comments_count >= 2`)
+   and fetch top-voted comments (`top_comments`).
+8. Write structured output to `.preflight/prior-art.json` and print a compact Markdown digest.
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import sqlite3
@@ -40,6 +44,43 @@ GRAVEYARD_DAYS_THRESHOLD = 365
 # Minimum engagement required for an open issue to qualify as a "Mined Pain Point"
 MIN_ISSUE_PLUS_ONE = 1
 MIN_ISSUE_COMMENTS = 2
+
+# Config file signatures used to prove which maintenance/infra tools a scouted repo actually uses
+CONFIG_SIGNATURES: list[tuple[str, str, str]] = [
+    ("uv.lock", "uv (uv.lock)", "dependency-lock"),
+    ("poetry.lock", "Poetry (poetry.lock)", "dependency-lock"),
+    ("pdm.lock", "PDM (pdm.lock)", "dependency-lock"),
+    ("Pipfile.lock", "Pipenv (Pipfile.lock)", "dependency-lock"),
+    ("requirements.txt", "pip (requirements.txt)", "dependency-lock"),
+    ("pnpm-lock.yaml", "pnpm (pnpm-lock.yaml)", "dependency-lock"),
+    ("bun.lockb", "Bun (bun.lockb)", "dependency-lock"),
+    ("bun.lock", "Bun (bun.lock)", "dependency-lock"),
+    ("yarn.lock", "Yarn (yarn.lock)", "dependency-lock"),
+    ("package-lock.json", "npm (package-lock.json)", "dependency-lock"),
+    ("Cargo.lock", "Cargo (Cargo.lock)", "dependency-lock"),
+    ("go.sum", "Go Modules (go.sum)", "dependency-lock"),
+    ("Dockerfile", "Docker (Dockerfile)", "container-runtime"),
+    ("Containerfile", "Podman/OCI (Containerfile)", "container-runtime"),
+    (".devcontainer", "Dev Containers (.devcontainer)", "container-runtime"),
+    ("docker-compose.yml", "Docker Compose (docker-compose.yml)", "orchestration-deploy"),
+    ("docker-compose.yaml", "Docker Compose (docker-compose.yaml)", "orchestration-deploy"),
+    ("compose.yml", "Docker Compose (compose.yml)", "orchestration-deploy"),
+    ("compose.yaml", "Docker Compose (compose.yaml)", "orchestration-deploy"),
+    ("Chart.yaml", "Helm / Kubernetes (Chart.yaml)", "orchestration-deploy"),
+    ("k8s", "Kubernetes Manifests (k8s/)", "orchestration-deploy"),
+    ("kubernetes", "Kubernetes Manifests (kubernetes/)", "orchestration-deploy"),
+    ("helm", "Helm Charts (helm/)", "orchestration-deploy"),
+    ("fly.toml", "Fly.io (fly.toml)", "orchestration-deploy"),
+    ("render.yaml", "Render (render.yaml)", "orchestration-deploy"),
+    ("vercel.json", "Vercel (vercel.json)", "orchestration-deploy"),
+    (".github", "GitHub Actions (.github/workflows)", "ci-cd-quality"),
+    (".gitlab-ci.yml", "GitLab CI (.gitlab-ci.yml)", "ci-cd-quality"),
+    (".pre-commit-config.yaml", "pre-commit (.pre-commit-config.yaml)", "ci-cd-quality"),
+    ("ruff.toml", "Ruff (ruff.toml)", "ci-cd-quality"),
+    (".ruff.toml", "Ruff (.ruff.toml)", "ci-cd-quality"),
+    ("Makefile", "Make (Makefile)", "ci-cd-quality"),
+    ("justfile", "just (justfile)", "ci-cd-quality"),
+]
 
 
 def now_ts() -> int:
@@ -309,6 +350,11 @@ def classify_repo(raw: dict[str, Any], ref_dt: datetime | None = None) -> dict[s
     elif is_graveyard:
         graveyard_reason = f"Dormant / no pushes in {inactive_days} days (>365d threshold)"
 
+    license_obj = raw.get("license") or {}
+    license_spdx = license_obj.get("spdx_id") if isinstance(license_obj, dict) else ""
+    if not license_spdx or license_spdx == "NOASSERTION":
+        license_spdx = "Unspecified"
+
     return {
         "full_name": raw["full_name"],
         "html_url": raw["html_url"],
@@ -317,6 +363,7 @@ def classify_repo(raw: dict[str, Any], ref_dt: datetime | None = None) -> dict[s
         "forks": int(raw.get("forks_count", 0)),
         "open_issues_count": int(raw.get("open_issues_count", 0)),
         "language": raw.get("language") or "Markdown/Other",
+        "license": license_spdx,
         "topics": raw.get("topics") or [],
         "created_at": created_at or "",
         "pushed_at": pushed_at or "",
@@ -325,7 +372,147 @@ def classify_repo(raw: dict[str, Any], ref_dt: datetime | None = None) -> dict[s
         "star_velocity_per_month": velocity,
         "classification": classification,
         "graveyard_reason": graveyard_reason,
+        "detected_configs": [],
     }
+
+
+def parse_stack_signals_from_files(
+    root_entries: list[str],
+    pyproject_text: str = "",
+    has_github_workflows: bool = False,
+) -> list[dict[str, str]]:
+    """
+    Given a list of root file/directory names in a repository and optional `pyproject.toml` text,
+    return structured config-file evidence proving which build/lock/container/CI tools are used.
+    """
+    entry_set = set(root_entries)
+    signals: list[dict[str, str]] = []
+    seen_tools: set[str] = set()
+
+    # 1. Inspect pyproject.toml sections first if present
+    if "pyproject.toml" in entry_set:
+        py_lower = pyproject_text.lower()
+        if "[tool.poetry" in py_lower:
+            has_lock = "poetry.lock" in entry_set
+            cfg_desc = "pyproject.toml ([tool.poetry]) + poetry.lock" if has_lock else "pyproject.toml ([tool.poetry])"
+            signals.append(
+                {
+                    "config_file": cfg_desc,
+                    "tool": "Poetry",
+                    "category": "dependency-lock",
+                }
+            )
+            seen_tools.update({"Poetry", "Poetry (poetry.lock)"})
+        if "[tool.uv" in py_lower:
+            has_lock = "uv.lock" in entry_set
+            cfg_desc = "pyproject.toml ([tool.uv]) + uv.lock" if has_lock else "pyproject.toml ([tool.uv])"
+            signals.append(
+                {
+                    "config_file": cfg_desc,
+                    "tool": "uv",
+                    "category": "dependency-lock",
+                }
+            )
+            seen_tools.update({"uv", "uv (uv.lock)"})
+        if "[tool.ruff" in py_lower:
+            signals.append(
+                {
+                    "config_file": "pyproject.toml ([tool.ruff])",
+                    "tool": "Ruff",
+                    "category": "ci-cd-quality",
+                }
+            )
+            seen_tools.update({"Ruff", "Ruff (ruff.toml)", "Ruff (.ruff.toml)"})
+        if "[tool.pytest" in py_lower:
+            signals.append(
+                {
+                    "config_file": "pyproject.toml ([tool.pytest])",
+                    "tool": "pytest",
+                    "category": "ci-cd-quality",
+                }
+            )
+            seen_tools.add("pytest")
+        if not any(k in py_lower for k in ("[tool.poetry", "[tool.uv")) and "[project]" in py_lower:
+            signals.append(
+                {
+                    "config_file": "pyproject.toml ([project] PEP 621)",
+                    "tool": "PEP 621 Python Packaging",
+                    "category": "dependency-lock",
+                }
+            )
+
+    # 2. Match known root config files & directories
+    for filename, tool_label, category in CONFIG_SIGNATURES:
+        if filename == ".github":
+            if has_github_workflows:
+                signals.append(
+                    {
+                        "config_file": ".github/workflows",
+                        "tool": "GitHub Actions",
+                        "category": "ci-cd-quality",
+                    }
+                )
+            continue
+        if filename in entry_set and tool_label not in seen_tools:
+            signals.append(
+                {
+                    "config_file": filename,
+                    "tool": tool_label,
+                    "category": category,
+                }
+            )
+            seen_tools.add(tool_label)
+
+    return signals
+
+
+def inspect_repo_stack_configs(
+    repo_full_name: str,
+    token: str | None,
+    cache: RepoCache,
+    rate_limit_info: dict[str, Any],
+) -> list[dict[str, str]]:
+    """
+    Fetch root directory contents (and `pyproject.toml` / `.github` if present) from GitHub REST API
+    to prove which dependency managers, containers, orchestrators, and CI tools the repo uses.
+    """
+    contents_url = f"https://api.github.com/repos/{repo_full_name}/contents"
+    try:
+        items = github_get_json(contents_url, token, cache, rate_limit_info)
+        if not isinstance(items, list):
+            return []
+        root_names = [str(it.get("name") or "") for it in items if isinstance(it, dict)]
+    except Exception:
+        return []
+
+    pyproject_text = ""
+    if "pyproject.toml" in root_names:
+        py_url = f"https://api.github.com/repos/{repo_full_name}/contents/pyproject.toml"
+        try:
+            py_payload = github_get_json(py_url, token, cache, rate_limit_info)
+            if isinstance(py_payload, dict) and py_payload.get("content"):
+                raw_b64 = str(py_payload["content"]).replace("\n", "")
+                pyproject_text = base64.b64decode(raw_b64).decode("utf-8", errors="ignore")
+        except Exception:
+            pass
+
+    has_workflows = False
+    if ".github" in root_names:
+        gh_url = f"https://api.github.com/repos/{repo_full_name}/contents/.github"
+        try:
+            gh_items = github_get_json(gh_url, token, cache, rate_limit_info)
+            if isinstance(gh_items, list):
+                has_workflows = any(
+                    isinstance(it, dict) and str(it.get("name") or "") == "workflows" for it in gh_items
+                )
+        except Exception:
+            pass
+
+    return parse_stack_signals_from_files(
+        root_entries=root_names,
+        pyproject_text=pyproject_text,
+        has_github_workflows=has_workflows,
+    )
 
 
 def is_substantive_pain_point(raw_issue: dict[str, Any]) -> bool:
@@ -409,7 +596,7 @@ def github_get_json(
 
     headers = {
         "Accept": "application/vnd.github+json",
-        "User-Agent": "PreFlight-PriorArt-Scout/0.2",
+        "User-Agent": "PreFlight-PriorArt-Scout/0.4",
         "X-GitHub-Api-Version": "2022-11-28",
     }
     if token:
@@ -455,6 +642,7 @@ def scout_github(
     cache: RepoCache,
     token: str | None,
     auth_source: str,
+    tool_queries: list[str] | None = None,
     max_repos_per_query: int = 8,
     max_incumbents_for_issues: int = 4,
     issues_per_repo: int = 5,
@@ -466,6 +654,7 @@ def scout_github(
         issues_per_repo = min(issues_per_repo, 3)
 
     discovered: dict[str, dict[str, Any]] = {}
+    building_blocks: dict[str, dict[str, Any]] = {}
     errors: list[str] = []
     rate_limit_info: dict[str, Any] = {
         "search_api_quota": "30 req/min" if token else "10 req/min",
@@ -501,9 +690,58 @@ def scout_github(
         except Exception as e:
             errors.append(f"Search query '{q}' failed: {e}")
 
+    # Scout open-source building blocks / libraries / tooling if requested
+    for tq in tool_queries or []:
+        if rate_limit_info.get("remaining") is not None and int(rate_limit_info["remaining"]) <= 1:
+            errors.append("GitHub Search API rate limit nearly exhausted; skipping remaining tool queries.")
+            break
+        scoped_tq = normalize_repo_query(tq)
+        encoded_tq = urllib.parse.quote(scoped_tq)
+        url = f"https://api.github.com/search/repositories?q={encoded_tq}&sort=stars&order=desc&per_page=5"
+        try:
+            payload = github_get_json(url, token, cache, rate_limit_info)
+            for item in payload.get("items", []):
+                if item.get("fork") or is_noise_repo(item):
+                    continue
+                classified = classify_repo(item)
+                if classified["classification"] != "active_incumbent":
+                    continue
+                classified["classification"] = "oss_building_block"
+                classified["matched_query"] = tq
+                full_name = classified["full_name"]
+                if full_name not in building_blocks:
+                    building_blocks[full_name] = classified
+                    cache.upsert_repo(classified)
+        except urllib.error.HTTPError as e:
+            errors.append(f"Tool query '{tq}' failed: HTTP {e.code} ({e.reason})")
+        except Exception as e:
+            errors.append(f"Tool query '{tq}' failed: {e}")
+
     all_repos = sorted(discovered.values(), key=lambda r: r["stars"], reverse=True)
     incumbents = [r for r in all_repos if r["classification"] == "active_incumbent"]
     graveyard = [r for r in all_repos if r["classification"] == "graveyard"]
+    oss_tools = sorted(building_blocks.values(), key=lambda r: r["stars"], reverse=True)
+
+    # Inspect config files (pyproject.toml, Dockerfile, .github/workflows, .pre-commit-config.yaml, etc.)
+    # across top incumbents to prove what tooling real repos in this space use.
+    max_config_inspections = 4 if token else 2
+    observed_stack_signals: dict[str, dict[str, Any]] = {}
+    for repo in incumbents[:max_config_inspections]:
+        signals = inspect_repo_stack_configs(repo["full_name"], token, cache, rate_limit_info)
+        repo["detected_configs"] = signals
+        for sig in signals:
+            key = f"{sig['category']}:{sig['tool']}"
+            entry = observed_stack_signals.setdefault(
+                key,
+                {
+                    "tool": sig["tool"],
+                    "category": sig["category"],
+                    "config_file": sig["config_file"],
+                    "repos": [],
+                },
+            )
+            if repo["full_name"] not in entry["repos"]:
+                entry["repos"].append(repo["full_name"])
 
     pain_points_by_url: dict[str, dict[str, Any]] = {}
     for repo in incumbents[:max_incumbents_for_issues]:
@@ -573,8 +811,11 @@ def scout_github(
         "auth_source": auth_source,
         "rate_limit": rate_limit_info,
         "queries": queries,
+        "tool_queries": tool_queries or [],
         "active_incumbents": incumbents,
         "graveyard_repos": graveyard,
+        "oss_building_blocks": oss_tools,
+        "observed_stack_configs": list(observed_stack_signals.values()),
         "pain_points": pain_points,
         "warnings": errors,
     }
@@ -583,6 +824,8 @@ def scout_github(
 def format_markdown_digest(report: dict[str, Any]) -> str:
     incumbents = report.get("active_incumbents", [])
     graveyard = report.get("graveyard_repos", [])
+    oss_tools = report.get("oss_building_blocks", [])
+    observed_configs = report.get("observed_stack_configs", [])
     pain_points = report.get("pain_points", [])
     warnings = report.get("warnings", [])
     rl = report.get("rate_limit") or {}
@@ -592,12 +835,19 @@ def format_markdown_digest(report: dict[str, Any]) -> str:
         rl_str += f" ({rl['remaining']}/{rl['limit']} remaining in current window)"
 
     lines = [
-        "# Prior-Art Scout Digest",
+        "# Prior-Art & Stack Config Scout Digest",
         f"- **Auth Mode:** `{report.get('auth_source', 'unknown')}` — Search API Quota: `{rl_str}`",
-        f"- **Queries Executed:** {', '.join(f'`{q}`' for q in report.get('queries', []))}",
-        f"- **Discovered:** {len(incumbents)} Active Incumbents | {len(graveyard)} Graveyard/Dormant Repos | {len(pain_points)} Verified Pain Points",
-        "",
+        f"- **Competitor Queries:** {', '.join(f'`{q}`' for q in report.get('queries', []))}",
     ]
+    if report.get("tool_queries"):
+        lines.append(f"- **OSS Tooling Queries:** {', '.join(f'`{q}`' for q in report.get('tool_queries', []))}")
+    lines.extend(
+        [
+            f"- **Discovered:** {len(incumbents)} Active Incumbents | {len(graveyard)} Graveyard/Dormant Repos | "
+            f"{len(observed_configs)} Verified Config Signals | {len(oss_tools)} OSS Building Blocks | {len(pain_points)} Verified Pain Points",
+            "",
+        ]
+    )
 
     if warnings:
         lines.append("## Warnings")
@@ -609,14 +859,26 @@ def format_markdown_digest(report: dict[str, Any]) -> str:
     if not incumbents:
         lines.append("_No active incumbents found._")
     else:
-        lines.append("| Repo | Stars | Star Velocity | Last Push | Summary |")
-        lines.append("| :--- | :---: | :---: | :---: | :--- |")
+        lines.append("| Repo | Stars | Star Velocity | Last Push | Verified Config Files | Summary |")
+        lines.append("| :--- | :---: | :---: | :---: | :--- | :--- |")
         for r in incumbents[:8]:
-            desc = (r.get("description") or "—").replace("|", "\\|")[:100]
+            desc = (r.get("description") or "—").replace("|", "\\|")[:90]
+            cfgs = ", ".join(f"`{c['config_file']}`" for c in (r.get("detected_configs") or [])[:4]) or "—"
             lines.append(
-                f"| [{r['full_name']}]({r['html_url']}) | ⭐ {r['stars']} | {r['star_velocity_per_month']}/mo | {r['inactive_days']}d ago | {desc} |"
+                f"| [{r['full_name']}]({r['html_url']}) | ⭐ {r['stars']} | {r['star_velocity_per_month']}/mo | {r['inactive_days']}d ago | {cfgs} | {desc} |"
             )
     lines.append("")
+
+    if observed_configs:
+        lines.append("## Stack Config Evidence Across Scouted Repos (Proof of Tool Usage)")
+        lines.append("| Category | Tool Proven | Config File Evidence | Seen In Repos |")
+        lines.append("| :--- | :--- | :--- | :--- |")
+        for item in observed_configs:
+            repos_str = ", ".join(f"`{r}`" for r in item.get("repos", []))
+            lines.append(
+                f"| `{item.get('category')}` | **{item.get('tool')}** | `{item.get('config_file')}` | {repos_str} |"
+            )
+        lines.append("")
 
     lines.append("## Graveyard & Dormant Check (Archived or >365d No Pushes)")
     if not graveyard:
@@ -630,6 +892,18 @@ def format_markdown_digest(report: dict[str, Any]) -> str:
                 f"| [{r['full_name']}]({r['html_url']}) | ⭐ {r['stars']} | {r['inactive_days']}d | {r['graveyard_reason']} | {desc} |"
             )
     lines.append("")
+
+    if oss_tools:
+        lines.append("## Scouted OSS Building Blocks & Libraries (`--tool-query`)")
+        lines.append("| Repo | Stars | License | Language | Last Push | Purpose / Summary |")
+        lines.append("| :--- | :---: | :---: | :---: | :---: | :--- |")
+        for t in oss_tools[:10]:
+            desc = (t.get("description") or "—").replace("|", "\\|")[:95]
+            lines.append(
+                f"| [{t['full_name']}]({t['html_url']}) | ⭐ {t['stars']} | `{t.get('license', 'Unspecified')}` | "
+                f"{t.get('language', '—')} | {t['inactive_days']}d ago | {desc} |"
+            )
+        lines.append("")
 
     lines.append("## Pain-Point Mining (Bugs & Top-Voted Open Issues Across Incumbents)")
     if not pain_points:
@@ -652,14 +926,21 @@ def format_markdown_digest(report: dict[str, Any]) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="PreFlight GitHub Prior-Art Scout")
+    parser = argparse.ArgumentParser(description="PreFlight GitHub Prior-Art, Config Inspector & OSS Building-Block Scout")
     parser.add_argument("--workspace", default=".", help="Target workspace directory")
     parser.add_argument(
         "--query",
         "-q",
         action="append",
         required=True,
-        help="GitHub repository search query (can be passed multiple times)",
+        help="GitHub competitor repository search query (can be passed multiple times)",
+    )
+    parser.add_argument(
+        "--tool-query",
+        "-t",
+        action="append",
+        default=[],
+        help="GitHub search query for open-source building blocks, SDKs, or tools to build the project",
     )
     parser.add_argument("--max-repos", type=int, default=8, help="Max repos per query")
     parser.add_argument("--json", action="store_true", help="Print JSON output instead of Markdown digest")
@@ -677,6 +958,7 @@ def main(argv: list[str] | None = None) -> int:
             cache=cache,
             token=token,
             auth_source=auth_source,
+            tool_queries=args.tool_query,
             max_repos_per_query=args.max_repos,
         )
     finally:

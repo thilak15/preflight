@@ -321,8 +321,17 @@ class TestPreFlightPipeline(unittest.TestCase):
 
         html_path = self.workspace / "blueprint_report.html"
         spec_path = self.workspace / ".preflight" / "SPEC.md"
+        issues_dir = self.workspace / ".preflight" / "issues"
         self.assertTrue(html_path.exists())
         self.assertTrue(spec_path.exists())
+        self.assertTrue((issues_dir / "INDEX.md").exists())
+        ticket_files = sorted(f.name for f in issues_dir.glob("[0-9][0-9]-*.md"))
+        self.assertEqual(len(ticket_files), 2)
+        first_ticket = (issues_dir / ticket_files[0]).read_text(encoding="utf-8")
+        second_ticket = (issues_dir / ticket_files[1]).read_text(encoding="utf-8")
+        self.assertIn("**Blocked by:** None (can start immediately)", first_ticket)
+        self.assertIn("ADR-0001", first_ticket)
+        self.assertIn(f"**Blocked by:** `01` ({ticket_files[0]})", second_ticket)
 
         html_text = html_path.read_text(encoding="utf-8")
         spec_text = spec_path.read_text(encoding="utf-8")
@@ -393,6 +402,211 @@ class TestPreFlightPipeline(unittest.TestCase):
         self.assertEqual(len(top), 2)
         self.assertEqual(top[0]["author"], "dev1")
         self.assertEqual(top[1]["author"], "dev2")
+
+    def test_tooling_maintenance_memory_advisor_and_fresh_reset(self) -> None:
+        # 0. Test scout.py config-file stack detection (pyproject.toml for Poetry/uv, Dockerfile, .github/workflows, .pre-commit-config.yaml)
+        signals = scout.parse_stack_signals_from_files(
+            root_entries=[
+                "pyproject.toml",
+                "uv.lock",
+                "Dockerfile",
+                "docker-compose.yml",
+                ".github",
+                ".pre-commit-config.yaml",
+            ],
+            pyproject_text="[project]\nname = 'demo'\n[tool.uv]\ndev-dependencies = []\n[tool.ruff]\nline-length = 100\n",
+            has_github_workflows=True,
+        )
+        signal_tools = {s["tool"]: s["config_file"] for s in signals}
+        self.assertEqual(signal_tools.get("uv"), "pyproject.toml ([tool.uv]) + uv.lock")
+        self.assertEqual(signal_tools.get("Ruff"), "pyproject.toml ([tool.ruff])")
+        self.assertEqual(signal_tools.get("Docker (Dockerfile)"), "Dockerfile")
+        self.assertEqual(signal_tools.get("GitHub Actions"), ".github/workflows")
+        self.assertEqual(signal_tools.get("pre-commit (.pre-commit-config.yaml)"), ".pre-commit-config.yaml")
+        # Ensure uv.lock is not duplicated as a separate entry when [tool.uv] was already detected
+        self.assertNotIn("uv (uv.lock)", signal_tools)
+
+        state.main(
+            [
+                "--workspace",
+                str(self.workspace),
+                "init",
+                "--name",
+                "AgentDocRouter",
+                "--summary",
+                "Multi-agent incident responder over runbooks",
+                "--runtime",
+                "Python 3.12",
+                "--stack",
+                "Python,SQLite FTS5,Docker",
+            ]
+        )
+
+        # 1. Record "Stack Explained" entries (what job it does, why needed now, alternative, now vs later, config proof)
+        rc_lock = state.main(
+            [
+                "--workspace",
+                str(self.workspace),
+                "add-tool",
+                "--category",
+                "dependency-lock",
+                "--purpose",
+                "Deterministic Python dependency locking and virtualenv reproducibility",
+                "--recommended",
+                "uv (uv.lock)",
+                "--stage",
+                "now",
+                "--config-proof",
+                "pyproject.toml ([tool.uv]) + uv.lock",
+                "--why",
+                "10-50x faster lockfile resolution than pip/Poetry with exact cross-platform hashes",
+                "--alternatives",
+                "Poetry (poetry.lock) if publishing complex multi-package workspaces; pip-tools (requirements.txt)",
+            ]
+        )
+        self.assertEqual(rc_lock, 0)
+
+        rc_container = state.main(
+            [
+                "--workspace",
+                str(self.workspace),
+                "add-tool",
+                "--category",
+                "container-runtime",
+                "--purpose",
+                "Reproducible production packaging and local dev parity",
+                "--recommended",
+                "Docker (multi-stage distroless/slim build)",
+                "--stage",
+                "now",
+                "--config-proof",
+                "Dockerfile",
+                "--why",
+                "Isolates Python runtime and native SQLite extensions into a 45MB read-only rootfs image",
+                "--alternatives",
+                "Nix flakes (steeper learning curve); bare virtualenv on host (drift risk)",
+            ]
+        )
+        self.assertEqual(rc_container, 0)
+
+        rc_orch = state.main(
+            [
+                "--workspace",
+                str(self.workspace),
+                "add-tool",
+                "--category",
+                "orchestration-deploy",
+                "--purpose",
+                "Multi-node horizontal container orchestration",
+                "--recommended",
+                "Kubernetes (k3s / Helm)",
+                "--stage",
+                "later",
+                "--config-proof",
+                "Chart.yaml / k8s/",
+                "--why",
+                "Defer until >100 RPS or multi-node HA is required; V1 uses single-node SQLite WAL over Docker Compose",
+                "--alternatives",
+                "Docker Compose (used NOW for Day-1 single-node deployment); Fly.io Machines",
+            ]
+        )
+        self.assertEqual(rc_orch, 0)
+
+        # 2. Configure Memory & Agent Communication Architecture (set-memory-arch)
+        rc_mem = state.main(
+            [
+                "--workspace",
+                str(self.workspace),
+                "set-memory-arch",
+                "--strategy",
+                "hybrid-search",
+                "--communication",
+                "Typed JSON handoff envelopes between Triage Agent and Runbook Executor (no raw chat history forwarding)",
+                "--workflow",
+                "Triage Agent writes structured incident state to SQLite WAL; Runbook Executor queries SQLite FTS5 + local embeddings",
+                "--rationale",
+                "Pure Vector DB misses exact error codes (e.g. ERR_TLS_CERT_ALTNAME_INVALID); hybrid FTS5 + embeddings catches both exact symbols and semantic runbooks",
+                "--alternatives",
+                "Pure Vector DB (Pinecone/Chroma — poor exact error-code recall); Full context window stuffing (causes context rot after 5 turns)",
+                "--failure-mode",
+                "Context window bloat across multi-agent turns -> Mitigated by strict 2KB JSON handoff schema",
+                "--failure-mode",
+                "Stale runbook embeddings after markdown edits -> Mitigated by content-SHA256 invalidation hook on git pull",
+            ]
+        )
+        self.assertEqual(rc_mem, 0)
+
+        # Verify .preflight/STACK.md was automatically created and populated
+        stack_md_path = self.workspace / ".preflight" / "STACK.md"
+        self.assertTrue(stack_md_path.exists())
+        stack_md = stack_md_path.read_text(encoding="utf-8")
+        self.assertIn("uv (uv.lock)", stack_md)
+        self.assertIn("poetry.lock", stack_md)
+        self.assertIn("Docker", stack_md)
+        self.assertIn("Kubernetes", stack_md)
+        self.assertIn("hybrid-search", stack_md)
+        self.assertIn("Context window bloat", stack_md)
+
+        # 3. Score a dimension and add an ADR so state is populated
+        state.main(
+            [
+                "--workspace",
+                str(self.workspace),
+                "update-dimension",
+                "--dimension",
+                "memory",
+                "--score",
+                "20",
+                "--summary",
+                "Hybrid SQLite FTS5 + local vector search with typed JSON agent handoffs.",
+                "--edge-case",
+                "Context bloat prevented by 2KB JSON handoff schema",
+                "--edge-case",
+                "Stale embeddings invalidated via file SHA256 check",
+            ]
+        )
+        state.main(
+            [
+                "--workspace",
+                str(self.workspace),
+                "add-decision",
+                "--title",
+                "Use Hybrid FTS5 over Pure Vector DB",
+                "--decision",
+                "Use SQLite FTS5 + embeddings instead of standalone Vector DB",
+                "--dimension",
+                "memory",
+            ]
+        )
+        self.assertTrue((self.workspace / "docs" / "adr").exists())
+        self.assertEqual(len(list((self.workspace / "docs" / "adr").glob("*.md"))), 1)
+
+        # 4. Now test `state.py reset` to wipe all pre-performed scores, ADRs, and state for a fresh run
+        rc_reset = state.main(["--workspace", str(self.workspace), "reset"])
+        self.assertEqual(rc_reset, 0)
+        self.assertFalse((self.workspace / ".preflight" / "state.json").exists())
+        self.assertFalse((self.workspace / ".preflight" / "decisions.json").exists())
+        self.assertFalse((self.workspace / ".preflight" / "STACK.md").exists())
+        self.assertEqual(len(list((self.workspace / "docs" / "adr").glob("*.md"))), 0)
+
+        # 5. Re-initialize a brand new idea in the same folder and verify all scores start at 0
+        state.main(
+            [
+                "--workspace",
+                str(self.workspace),
+                "init",
+                "--reset",
+                "--name",
+                "FreshIdeaTwo",
+                "--summary",
+                "Brand new idea in the same directory",
+            ]
+        )
+        fresh_state = state.load_state(self.workspace)
+        self.assertEqual(fresh_state["project_name"], "FreshIdeaTwo")
+        self.assertEqual(fresh_state["readiness_score"], 0)
+        self.assertEqual(fresh_state["dimensions"]["memory"]["score"], 0)
+        self.assertEqual(len(fresh_state["tooling_recommendations"]), 0)
 
 
 if __name__ == "__main__":

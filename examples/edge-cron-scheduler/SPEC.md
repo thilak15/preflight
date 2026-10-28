@@ -24,7 +24,7 @@ Single-node static Go binary managing declarative YAML DAGs with per-step cgroup
 - Non-goal: cross-node distributed task migration or distributed locking
 - Boundary: Linux kernel >= 5.14 with unified cgroup v2 hierarchy mounted at /sys/fs/cgroup
 
-### State & Persistence (Memory) (`memory` — 20/20)
+### State, Memory & Agent Communication (`memory` — 20/20)
 Single local SQLite database in WAL mode storing DAG run history, step state transitions, and last-scheduled watermarks via a single writer goroutine.
 
 **Stress-Tested Edge Cases:**
@@ -45,7 +45,43 @@ Unlike dagu-org/dagu (#412 orphan subprocess leaks) and SimpleHQ/simple-etcd-cro
 - Solves dagu-org/dagu#412 by killing the entire cgroup v2 tree on timeout or daemon restart
 - Avoids the etcd quorum split-brain failure mode that caused SimpleHQ/simple-etcd-cron to be archived
 
-## 3. Adversarial Red-Team Critiques & Mitigations
+### Memory, State & Agent Communication Workflow
+
+- **Selected Memory Strategy:** `transactional-db`
+- **Agent / Component Communication Pattern:** In-process typed Go channels feeding a single 100ms batch-writer goroutine into SQLite WAL
+- **Workflow Memory Lifecycle:** Ticker reads watermark -> Supervisor spawns cgroup step -> Heartbeats batch-committed to SQLite WAL -> Startup scanner reaps orphaned RUNNING rows
+- **Why Chosen (vs. RAG / Vector DB / Alternatives):** EdgeCron stores structured state transitions and cron watermarks, not unstructured text; SQLite WAL provides ACID durability on power loss with 0MB idle overhead, whereas a Vector DB / RAG or external Postgres adds zero value and breaks offline autonomy
+- **Alternatives Considered:** Embedded etcd Raft (rejected: loses quorum on 2-node WAN splits); Redis (volatile on power loss); Vector DB / RAG (not applicable to deterministic DAG state)
+
+- ⚠️ **Memory Failure Mode & Mitigation:** SQLITE_BUSY lock contention when 50+ steps emit heartbeats concurrently -> Mitigated by funneling all writes through a single 100ms batching goroutine
+- ⚠️ **Memory Failure Mode & Mitigation:** Stale RUNNING state after sudden power pull -> Mitigated by startup reconciliation against /sys/fs/cgroup/edgecron/<run_id>
+
+## 3. Stack Explained (Config-Verified Tooling, Alternatives & Now vs. Later)
+
+| Tool | Stage (`Now` / `Later`) | What Job It Does | Why Needed | Alternative Considered | Config Proof in Prior-Art |
+| :--- | :---: | :--- | :--- | :--- | :--- |
+| **Go Modules (go.sum)** (`dependency-lock`) | **NOW** | Cryptographic dependency pinning and reproducible static binary builds | Built into Go toolchain; guarantees identical module checksums across dev and CI without external package managers | Vendored directory (bloats git history unless air-gapped build is required) | `go.mod + go.sum` |
+| **modernc.org/sqlite** (`core-oss`) | **NOW** | CGo-free embedded SQLite3 engine in WAL mode | Allows compiling a pure static Linux binary (CGO_ENABLED=0) for amd64/arm64 edge gateways without glibc mismatches | mattn/go-sqlite3 (requires CGo and matching target libc); etcd (rejected due to quorum loss) | `go.mod` |
+| **Docker (Multi-stage build + privileged cgroup test container)** (`container-runtime`) | **NOW** | Consistent cross-compilation and integration testing of Linux cgroup v2 teardown | Developers on macOS need a Linux kernel container to test /sys/fs/cgroup/edgecron/cgroup.kill behavior | Bare host builds (cannot test Linux cgroups v2 natively on macOS) | `Dockerfile` |
+| **GitHub Actions + golangci-lint** (`ci-cd-quality`) | **NOW** | Automated unit tests, race-detector runs (go test -race), and static analysis on every PR | Catches concurrency bugs in the single-writer SQLite batch loop before merge | Local pre-push hooks only (can be bypassed) | `.github/workflows/ci.yml` |
+| **Kubernetes / k3s Fleet Controller** (`orchestration-deploy`) | **LATER** | Centralized fleet rollout across 500+ edge gateways | Defer until V2; V1 targets single-binary systemd installation on constrained 1GB RAM nodes where k3s overhead (~500MB) is too heavy | systemd unit file + atomic binary swap (used NOW for V1) | `Chart.yaml / k8s/ (Deferred)` |
+
+### Config Files Verified in Scouted Incumbent Repos
+
+| Category | Tool Proven | Config File Inspected | Observed In Repos |
+| :--- | :--- | :--- | :--- |
+| `dependency-lock` | **Go Modules (go.sum)** | `go.sum` | `dagu-org/dagu` |
+| `container-runtime` | **Docker (Dockerfile)** | `Dockerfile` | `dagu-org/dagu` |
+| `ci-cd-quality` | **GitHub Actions** | `.github/workflows` | `dagu-org/dagu` |
+
+### Scouted Open-Source Building Blocks (GitHub)
+
+| Repository | Stars | License | Language | Last Push | Description |
+| :--- | :---: | :---: | :---: | :---: | :--- |
+| [containerd/cgroups](https://github.com/containerd/cgroups) | ⭐ 1240 | `Apache-2.0` | Go | 9d ago | Go package for creating, managing, inspecting, and destroying Linux cgroups v1 and v2 |
+| [modernc.org/sqlite](https://gitlab.com/cznic/sqlite) | ⭐ 2890 | `BSD-3-Clause` | Go | 4d ago | CGo-free pure Go SQLite3 driver with full WAL concurrency support |
+
+## 4. Adversarial Red-Team Critiques & Mitigations
 
 ### [CRITICAL] Embedded etcd Quorum Loss Halts All Local Jobs (Pivoted in Round 1)
 - **Failure Mode / Attack Vector:** In the initial pitch, a 3-node edge cluster losing 2 nodes or LAN switch connectivity loses Raft quorum and stops firing local jobs.
@@ -55,10 +91,10 @@ Unlike dagu-org/dagu (#412 orphan subprocess leaks) and SimpleHQ/simple-etcd-cro
 - **Failure Mode / Attack Vector:** After a 4-hour power outage, a naive scheduler fires 240 missed 1-minute jobs simultaneously, exhausting 1GB edge RAM.
 - **Architectural Mitigation:** Enforce explicit catchup_policy (default: latest_only) evaluated against the SQLite watermark before scheduling.
 
-## 4. GitHub Prior-Art & Mined Pain Points
+## 5. GitHub Prior-Art & Mined Pain Points
 
 | Repository | Stars | Velocity | Last Push | Status | Summary |
-| :--- | :---: | :---: | :---: | :---: | :--- |
+| :--- | :---: | :---: | :---: | :--- | :--- |
 | [dagu-org/dagu](https://github.com/dagu-org/dagu) | ⭐ 6580 | 121.8/mo | 2d ago | Active Incumbent | Yet another cron alternative with a Web UI, but with much more capabilities. Single binary, no DBMS required. |
 | [SimpleHQ/simple-etcd-cron](https://github.com/SimpleHQ/simple-etcd-cron) | ⭐ 185 | 2.0/mo | 1535d ago | Explicitly archived by maintainer | Distributed cron scheduler backed by etcd leases |
 
@@ -68,7 +104,7 @@ Unlike dagu-org/dagu (#412 orphan subprocess leaks) and SimpleHQ/simple-etcd-cro
   > When a DAG step spawns background subshells and hits its timeout, only the top-level shell PID is killed, leaving grand-child processes running indefinitely.
   > 💬 **@linux-sre** (👍 11): Standard Go os/exec Kill only targets the direct PID. On Linux, wrapping each step in a dedicated cgroup v2 scope and writing 1 to cgroup.kill is the only way to guarantee zero orphans.
 
-## 5. System Architecture Diagrams
+## 6. System Architecture Diagrams
 
 ### System Topology
 
@@ -108,7 +144,7 @@ sequenceDiagram
 | **Embedded etcd Raft Cluster** | Cross-node leader election | Halts local jobs on network partition; high operational complexity | Rejected in Round 1 |
 | **Unmodified dagu-org/dagu** | Mature UI and YAML format | No built-in cgroup v2 step scopes or power-outage catchup policies | Inspected as Prior Art |
 
-## 6. Decision Ledger (ADRs)
+## 7. Decision Ledger (ADRs)
 
 ### ADR-0001: Autonomous Local SQLite WAL Over Embedded etcd Raft
 - **Decision:** Run each edge gateway as an autonomous scheduler backed by local SQLite WAL instead of a multi-node etcd Raft cluster.
@@ -120,7 +156,7 @@ sequenceDiagram
 - **Rationale:** Guarantees zero orphan grandchildren processes after timeouts or SIGKILL (addressing dagu-org/dagu#412).
 - **Rejected Alternatives:** Standard Go os/exec cmd.Process.Kill()
 
-## 7. Implementation Plan
+## 8. Implementation Plan
 
 1. Implement SQLite WAL schema and single-writer batching state machine
 2. Implement power-loss watermark calculator (skip, latest_only, backfill_serial)

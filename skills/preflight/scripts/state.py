@@ -162,6 +162,12 @@ def reset_workspace_state(
                 adr_file.unlink()
                 removed.append(str(adr_file.relative_to(workspace)))
 
+    issues_dir = preflight_dir / "issues"
+    if issues_dir.exists():
+        for issue_file in sorted(issues_dir.glob("*.md")):
+            issue_file.unlink()
+            removed.append(str(issue_file.relative_to(workspace)))
+
     return removed
 
 
@@ -255,28 +261,43 @@ def load_state(workspace: Path) -> dict[str, Any]:
     return data
 
 
+def strip_step_prefix(raw_step: str) -> str:
+    """Strip leading 'Step 1:', '1.', or '01 -' numbering without corrupting leading numbers like '100ms'."""
+    return re.sub(r"^\s*(?:step\s+\d+\s*[:.\-]\s*|\d+\s*[.)]\s+)", "", raw_step, flags=re.IGNORECASE).strip()
+
+
+def format_stack_explained_table(tools: list[dict[str, Any]]) -> list[str]:
+    """Return Markdown table lines for the 'Stack Explained' tooling list."""
+    lines = [
+        "| Tool | Stage (`Now` / `Later`) | What Job It Does | Why Needed | Alternative Considered | Config Proof in Prior-Art |",
+        "| :--- | :---: | :--- | :--- | :--- | :--- |",
+    ]
+    for t in tools:
+        stage = (t.get("stage") or "now").upper()
+        proof = t.get("config_proof") or "—"
+        lines.append(
+            f"| **{t.get('recommended', '—')}** (`{t.get('category', 'core-oss')}`) | **{stage}** | "
+            f"{t.get('purpose', '—')} | {t.get('why', '—')} | {t.get('alternatives', '—')} | `{proof}` |"
+        )
+    return lines
+
+
 def build_stack_markdown(state: dict[str, Any]) -> str:
     project_name = state.get("project_name") or "Untitled Project"
     tools = state.get("tooling_recommendations") or []
     mem = state.get("memory_architecture") or {}
 
     lines = [
-        f"# Tooling, OSS Stack & Memory Architecture: {project_name}",
+        f"# Stack Explained & Memory Architecture: {project_name}",
         "",
-        "## 1. Recommended Tooling, OSS Building Blocks & Project Maintenance",
+        "## 1. Stack Explained (Config-Verified Tooling, Alternatives & Now vs. Later)",
         "",
     ]
     if not tools:
         lines.append("_No tooling recommendations recorded yet._")
         lines.append("")
     else:
-        lines.append("| Category | Purpose | Recommended Tool | Why Chosen | Alternatives Considered |")
-        lines.append("| :--- | :--- | :--- | :--- | :--- |")
-        for t in tools:
-            lines.append(
-                f"| `{t.get('category', 'general')}` | {t.get('purpose', '—')} | **{t.get('recommended', '—')}** | "
-                f"{t.get('why', '—')} | {t.get('alternatives', '—')} |"
-            )
+        lines.extend(format_stack_explained_table(tools))
         lines.append("")
 
     lines.extend(
@@ -467,6 +488,126 @@ def record_adr(
     return entry
 
 
+def export_tickets_to_dir(
+    workspace: Path,
+    state: dict[str, Any],
+    decisions: list[dict[str, Any]],
+    issues_dir: Path | None = None,
+) -> list[Path]:
+    """
+    Generate individual, dependency-ordered vertical-slice issue files under `.preflight/issues/NN-<slug>.md`
+    (plus an `INDEX.md` task graph) from the locked implementation steps, Stack Explained `NOW` tools,
+    Memory Architecture, and Decision Ledger (ADRs).
+    """
+    target_dir = issues_dir or (get_preflight_dir(workspace) / "issues")
+    target_dir.mkdir(parents=True, exist_ok=True)
+    for old_f in target_dir.glob("*.md"):
+        old_f.unlink()
+
+    project_name = state.get("project_name") or "Untitled Project"
+    sys_design = state.get("system_design") or {}
+    raw_steps = list(sys_design.get("implementation_steps") or [])
+    now_tools = [t for t in (state.get("tooling_recommendations") or []) if (t.get("stage") or "now") == "now"]
+    mem = state.get("memory_architecture") or {}
+    critiques = state.get("red_team_critiques") or []
+
+    # If no explicit steps were passed, synthesize tracer-bullet slices from stack, memory, and dimensions
+    if not raw_steps:
+        raw_steps = [
+            f"Bootstrap {project_name} Day-1 stack, lockfiles, and project skeleton",
+            f"Implement core state & memory layer ({mem.get('strategy') or 'transactional state'}) with failure-mode guards",
+            f"Implement core domain workflow and prior-art differentiation features for {project_name}",
+            "Add adversarial stress tests, rate-limit/bottleneck mitigations, and end-to-end verification",
+        ]
+
+    created_files: list[Path] = []
+    prev_ticket_ref = "None (can start immediately)"
+    index_lines = [
+        f"# Implementation Ticket Graph: {project_name}",
+        "",
+        "Work these tickets sequentially in dependency order (one vertical slice per session/commit):",
+        "",
+        "| # | Ticket File | Title | Blocked By | Status |",
+        "| :---: | :--- | :--- | :--- | :---: |",
+    ]
+
+    for idx, raw_step in enumerate(raw_steps, start=1):
+        clean_step = strip_step_prefix(raw_step)
+        # Allow optional "Title :: Details :: BlockedBy" syntax or plain text
+        if "::" in clean_step:
+            parts = [p.strip() for p in clean_step.split("::")]
+            title = parts[0]
+            what_to_build = parts[1] if len(parts) > 1 else parts[0]
+            blocked_by = parts[2] if len(parts) > 2 else prev_ticket_ref
+        else:
+            title = clean_step
+            what_to_build = clean_step
+            blocked_by = prev_ticket_ref
+
+        slug = slugify(title)
+        filename = f"{idx:02d}-{slug}.md"
+        file_path = target_dir / filename
+        ticket_id = f"{idx:02d}: {title}"
+
+        adr_refs = [f"- **{a['id']} ({a['title']})**: {a['decision']}" for a in decisions]
+        tool_refs = [
+            f"- **{t.get('recommended')}** (`{t.get('config_proof') or t.get('category')}`): {t.get('purpose')} — _{t.get('why')}_"
+            for t in now_tools
+        ]
+        crit_refs = [
+            f"- **[{c.get('severity', 'high').upper()}] {c.get('title')}**: {c.get('mitigation')}"
+            for c in critiques
+        ]
+
+        ticket_lines = [
+            f"# {ticket_id}",
+            "",
+            f"**What to build:** {what_to_build}",
+            "",
+            f"**Blocked by:** {blocked_by}",
+            "",
+            "**Status:** ready-for-agent",
+            "",
+            "## Locked Architecture & Stack Constraints",
+            "",
+            "- **Spec Reference:** `.preflight/SPEC.md` & `.preflight/STACK.md`",
+        ]
+        if mem.get("strategy"):
+            ticket_lines.append(
+                f"- **Memory & Agent Communication (`{mem['strategy']}`):** {mem.get('agent_communication_pattern') or '—'}"
+            )
+        if tool_refs:
+            ticket_lines.extend(["", "### Day-1 Stack (`NOW` Tools to Use)", *tool_refs])
+        if adr_refs:
+            ticket_lines.extend(["", "### Locked ADRs to Respect", *adr_refs])
+        if crit_refs:
+            ticket_lines.extend(["", "### Red-Team Mitigations to Enforce", *crit_refs])
+
+        ticket_lines.extend(
+            [
+                "",
+                "## Acceptance Criteria",
+                "",
+                f"- [ ] End-to-end vertical slice for **{title}** is implemented and verifiable.",
+                "- [ ] Unit/integration tests written test-first covering happy path and stress-tested edge cases.",
+                "- [ ] Respects all locked ADRs in `docs/adr/` and Day-1 stack constraints in `.preflight/STACK.md`.",
+                "- [ ] Full test suite passes with zero regressions.",
+                "",
+            ]
+        )
+
+        file_path.write_text("\n".join(ticket_lines), encoding="utf-8")
+        created_files.append(file_path)
+        index_lines.append(
+            f"| `{idx:02d}` | [{filename}](./{filename}) | {title} | {blocked_by} | `ready-for-agent` |"
+        )
+        prev_ticket_ref = f"`{idx:02d}` ({filename})"
+
+    index_path = target_dir / "INDEX.md"
+    index_path.write_text("\n".join(index_lines) + "\n", encoding="utf-8")
+    return created_files
+
+
 def format_scorecard(state: dict[str, Any], workspace: Path | None = None) -> str:
     total, unlocked, missing = evaluate_gate(state, workspace)
     gate_str = "UNLOCKED (Ready for Blueprint)" if unlocked else "LOCKED"
@@ -538,7 +679,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_tool = sub.add_parser(
         "add-tool",
-        help="Record a recommended OSS building block or project maintenance tool (Docker, Kubernetes, poetry/uv lock, etc.) with alternatives",
+        help="Record a 'Stack Explained' entry: what job it does, why needed, the alternative, 'now' vs 'later', and config proof",
     )
     p_tool.add_argument(
         "--category",
@@ -546,10 +687,21 @@ def main(argv: list[str] | None = None) -> int:
         default="core-oss",
         help="Tool category (e.g. dependency-lock, container-runtime, orchestration-deploy, ci-cd-quality, core-oss)",
     )
-    p_tool.add_argument("--purpose", required=True, help="What capability or maintenance job this tool fulfills")
-    p_tool.add_argument("--recommended", required=True, help="Recommended tool, library, or lock/container mechanism")
-    p_tool.add_argument("--why", required=True, help="Why this tool is recommended for this specific project")
-    p_tool.add_argument("--alternatives", required=True, help="Viable alternatives and when/why to use or reject them")
+    p_tool.add_argument("--purpose", required=True, help="What job this tool does")
+    p_tool.add_argument("--recommended", required=True, help="Tool name (e.g. uv / uv.lock, Docker, GitHub Actions, pre-commit)")
+    p_tool.add_argument("--why", required=True, help="Why this project needs it now (or why deferred to later)")
+    p_tool.add_argument("--alternatives", required=True, help="What the alternative was and why it wasn't chosen")
+    p_tool.add_argument(
+        "--stage",
+        choices=["now", "later"],
+        default="now",
+        help="Whether this tool is needed 'now' (Day 1 / V1) or 'later' (deferred until scale/trigger)",
+    )
+    p_tool.add_argument(
+        "--config-proof",
+        default="",
+        help="Config file proving usage in prior art or this project (e.g. 'pyproject.toml ([tool.uv])', 'Dockerfile', '.github/workflows', '.pre-commit-config.yaml')",
+    )
 
     p_mem = sub.add_parser(
         "set-memory-arch",
@@ -622,6 +774,21 @@ def main(argv: list[str] | None = None) -> int:
 
     p_status = sub.add_parser("status", help="Print current Readiness Scorecard")
     p_status.add_argument("--json", action="store_true")
+
+    p_tickets = sub.add_parser(
+        "export-tickets",
+        help="Generate individual, dependency-ordered issue files (.preflight/issues/NN-<slug>.md) ready to code one-by-one",
+    )
+    p_tickets.add_argument(
+        "--output-dir",
+        default="",
+        help="Optional custom directory for ticket files (defaults to .preflight/issues)",
+    )
+    p_tickets.add_argument(
+        "--force",
+        action="store_true",
+        help="Export tickets even if Readiness Gate is <80%",
+    )
 
     args = parser.parse_args(argv)
     workspace = Path(args.workspace).resolve()
@@ -708,6 +875,8 @@ def main(argv: list[str] | None = None) -> int:
             "recommended": args.recommended.strip(),
             "why": args.why.strip(),
             "alternatives": args.alternatives.strip(),
+            "stage": args.stage,
+            "config_proof": args.config_proof.strip(),
         }
         # Replace if same category + purpose already exists, otherwise append
         replaced = False
@@ -722,7 +891,10 @@ def main(argv: list[str] | None = None) -> int:
         if not replaced:
             tools.append(entry)
         save_state(workspace, state)
-        print(f"Recorded tool [{entry['category']}]: {entry['recommended']} ({entry['purpose']})")
+        print(
+            f"Recorded Stack Explained [{entry['stage'].upper()}] [{entry['category']}]: "
+            f"{entry['recommended']} ({entry['purpose']})"
+        )
         return 0
 
     if args.cmd == "set-memory-arch":
@@ -827,6 +999,24 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(state, indent=2))
         else:
             print(format_scorecard(state, workspace))
+        return 0
+
+    if args.cmd == "export-tickets":
+        state = load_state(workspace)
+        score, unlocked, missing = evaluate_gate(state, workspace)
+        if not unlocked and not args.force:
+            print(
+                f"ERROR: Readiness Gate is LOCKED ({score}% / 80% required). Pass `--force` to export draft tickets anyway.\n"
+                + "\n".join(f"  - {m}" for m in missing),
+                file=sys.stderr,
+            )
+            return 2
+        decisions = load_decisions(workspace)
+        out_dir = Path(args.output_dir).resolve() if args.output_dir else (get_preflight_dir(workspace) / "issues")
+        created = export_tickets_to_dir(workspace, state, decisions, issues_dir=out_dir)
+        print(f"Exported {len(created)} ordered ticket file(s) to {out_dir}:")
+        for f in created:
+            print(f"  - {f.relative_to(workspace) if f.is_relative_to(workspace) else f}")
         return 0
 
     return 1

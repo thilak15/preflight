@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PreFlight Blueprint — EdgeCron</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0b0f19;
+    --panel: #111827;
+    --panel-alt: #1f2937;
+    --border: #374151;
+    --text: #f3f4f6;
+    --muted: #9ca3af;
+    --accent: #38bdf8;
+    --green: #10b981;
+    --amber: #f59e0b;
+    --red: #ef4444;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+    line-height: 1.6;
+    padding: 2rem;
+  }
+  .container { max-width: 1280px; margin: 0 auto; }
+  header {
+    background: linear-gradient(135deg, #111827 0%, #1e293b 100%);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 2rem;
+    margin-bottom: 1.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+  }
+  .title-group h1 { font-size: 2rem; letter-spacing: -0.02em; margin-bottom: 0.4rem; }
+  .title-group p { color: var(--muted); max-width: 760px; }
+  .meta-row { margin-top: 1rem; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+  .stack-pill {
+    background: #1e293b;
+    border: 1px solid #334155;
+    color: var(--accent);
+    padding: 0.2rem 0.65rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+  .score-box {
+    background: #0f172a;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem 1.5rem;
+    text-align: right;
+    min-width: 240px;
+  }
+  .score-number { font-size: 2.5rem; font-weight: 800; color: #10b981; line-height: 1.1; }
+  .score-label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+  .copy-btn {
+    margin-top: 0.75rem;
+    background: #1e293b;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    padding: 0.4rem 0.85rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+  .copy-btn:hover { background: var(--accent); color: #0f172a; }
+  .tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1.5rem;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.75rem;
+    flex-wrap: wrap;
+  }
+  .tab-btn {
+    background: var(--panel);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    padding: 0.55rem 1.1rem;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.9rem;
+    transition: all 0.15s ease;
+  }
+  .tab-btn.active, .tab-btn:hover {
+    color: var(--text);
+    border-color: var(--accent);
+    background: #1e293b;
+  }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 1rem; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+  }
+  .dim-header, .crit-header, .pp-header, .adr-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+    gap: 0.5rem;
+  }
+  .dim-title { font-weight: 700; font-size: 1.05rem; }
+  .dim-score { font-weight: 700; font-size: 0.9rem; }
+  .progress-track {
+    width: 100%;
+    height: 8px;
+    background: #1f2937;
+    border-radius: 999px;
+    overflow: hidden;
+    margin-bottom: 0.75rem;
+  }
+  .progress-fill { height: 100%; border-radius: 999px; }
+  .edge-list { margin-top: 0.6rem; padding-left: 1.2rem; color: var(--muted); font-size: 0.9rem; }
+  .badge {
+    padding: 0.15rem 0.55rem;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    margin-right: 0.4rem;
+  }
+  .badge-green { background: #10b98122; color: #34d399; border: 1px solid #10b98155; }
+  .badge-red { background: #ef444422; color: #f87171; border: 1px solid #ef444455; }
+  .badge-blue { background: #38bdf822; color: #38bdf8; border: 1px solid #38bdf855; }
+  table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; font-size: 0.92rem; }
+  th, td { padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size: 0.75rem; }
+  tr.graveyard-row { background: #ef44440a; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .muted { color: var(--muted); font-size: 0.9rem; }
+  .rejected { color: #fca5a5; margin-top: 0.35rem; }
+  .comments-box {
+    margin-top: 0.65rem;
+    padding-top: 0.55rem;
+    border-top: 1px dashed var(--border);
+  }
+  .comment-quote {
+    font-size: 0.85rem;
+    color: #cbd5e1;
+    background: #0f172a;
+    padding: 0.45rem 0.65rem;
+    border-radius: 6px;
+    margin-top: 0.35rem;
+    border-left: 3px solid var(--accent);
+  }
+  .mermaid-box {
+    background: #0f172a;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.5rem;
+    overflow-x: auto;
+    margin-top: 0.75rem;
+  }
+  details.raw-mermaid { margin-top: 0.5rem; font-size: 0.82rem; color: var(--muted); }
+  details.raw-mermaid pre {
+    background: #0b0f19;
+    padding: 0.75rem;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    margin-top: 0.35rem;
+    color: #e2e8f0;
+    overflow-x: auto;
+  }
+  .step-list { padding-left: 1.4rem; }
+  .step-list li { margin-bottom: 0.6rem; }
+  h2.section-title { font-size: 1.35rem; margin: 1.25rem 0 0.75rem; color: #e2e8f0; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="title-group">
+      <div class="score-label">PREFLIGHT ARCHITECTURE &amp; PRIOR-ART BLUEPRINT</div>
+      <h1>EdgeCron</h1>
+      <p>Autonomous Linux edge DAG scheduler with cgroup v2 step isolation and deterministic power-loss catch-up policies.</p>
+      <div class="meta-row">
+        <span class="stack-pill">Runtime: Go 1.23 (Linux amd64/arm64)</span>
+        <span class="stack-pill">Go</span><span class="stack-pill">SQLite3 WAL</span><span class="stack-pill">Linux cgroups v2</span><span class="stack-pill">systemd</span>
+      </div>
+    </div>
+    <div class="score-box">
+      <div class="score-label">READINESS GATE PASSED</div>
+      <div class="score-number">100%</div>
+      <div class="muted">Evidence-Verified Rubric</div>
+      <button class="copy-btn" onclick="copySpecMarkdown(this)">Copy Spec Markdown (.preflight/SPEC.md)</button>
+    </div>
+  </header>
+
+  <div class="tabs">
+    <button class="tab-btn active" onclick="showTab('tab-scorecard', this)">1. Readiness &amp; Red-Team</button>
+    <button class="tab-btn" onclick="showTab('tab-prior-art', this)">2. Prior-Art &amp; Pain Points (2)</button>
+    <button class="tab-btn" onclick="showTab('tab-tooling-memory', this)">3. Stack Explained &amp; Memory (8)</button>
+    <button class="tab-btn" onclick="showTab('tab-design', this)">4. System Topology &amp; Sequence</button>
+    <button class="tab-btn" onclick="showTab('tab-ledger', this)">5. Decision Ledger (2) &amp; Plan</button>
+  </div>
+
+  <!-- TAB 1: SCORECARD & RED TEAM -->
+  <section id="tab-scorecard" class="tab-panel active">
+    <h2 class="section-title">5-Dimension Grilling Scorecard</h2>
+    <div class="grid-2">
+      
+            <div class="card dim-card">
+                <div class="dim-header">
+                    <span class="dim-title">Problem &amp; User Pain</span>
+                    <span class="dim-score" style="color:#10b981">20/20 (stress-tested)</span>
+                </div>
+                <div class="progress-track">
+                    <div class="progress-fill" style="width:100%; background:#10b981"></div>
+                </div>
+                <p class="dim-summary">Industrial and retail edge Linux gateways need reliable local job scheduling without heavy Python/Postgres stacks or fragile cross-node Raft quorums.</p>
+                <ul class="edge-list"><li>48-hour WAN blackout at a retail store where local backups and sensor aggregation must still execute on schedule</li><li>Hard power loss mid-step followed by system reboot 4 hours later</li></ul>
+            </div>
+            
+            <div class="card dim-card">
+                <div class="dim-header">
+                    <span class="dim-title">Scope &amp; Non-Goals</span>
+                    <span class="dim-score" style="color:#10b981">20/20 (stress-tested)</span>
+                </div>
+                <div class="progress-track">
+                    <div class="progress-fill" style="width:100%; background:#10b981"></div>
+                </div>
+                <p class="dim-summary">Single-node static Go binary managing declarative YAML DAGs with per-step cgroup v2 limits; explicitly excludes multi-node Raft scheduling in V1.</p>
+                <ul class="edge-list"><li>Non-goal: cross-node distributed task migration or distributed locking</li><li>Boundary: Linux kernel &gt;= 5.14 with unified cgroup v2 hierarchy mounted at /sys/fs/cgroup</li></ul>
+            </div>
+            
+            <div class="card dim-card">
+                <div class="dim-header">
+                    <span class="dim-title">State, Memory &amp; Agent Communication</span>
+                    <span class="dim-score" style="color:#10b981">20/20 (stress-tested)</span>
+                </div>
+                <div class="progress-track">
+                    <div class="progress-fill" style="width:100%; background:#10b981"></div>
+                </div>
+                <p class="dim-summary">Single local SQLite database in WAL mode storing DAG run history, step state transitions, and last-scheduled watermarks via a single writer goroutine.</p>
+                <ul class="edge-list"><li>50+ concurrent step heartbeats serialized through a 100ms batching channel to eliminate SQLITE_BUSY errors</li><li>Crash recovery on startup scans RUNNING steps whose cgroup no longer exists and marks them FAILED_ORPHANED</li></ul>
+            </div>
+            
+            <div class="card dim-card">
+                <div class="dim-header">
+                    <span class="dim-title">Bottlenecks &amp; Failure Modes</span>
+                    <span class="dim-score" style="color:#10b981">20/20 (stress-tested)</span>
+                </div>
+                <div class="progress-track">
+                    <div class="progress-fill" style="width:100%; background:#10b981"></div>
+                </div>
+                <p class="dim-summary">Eliminates runaway memory/CPU starvation and orphan subprocesses on 1GB RAM edge nodes using per-step cgroup.kill and memory.max limits.</p>
+                <ul class="edge-list"><li>Double-forked bash subprocess reaped deterministically via /sys/fs/cgroup/edgecron/&lt;step-id&gt;/cgroup.kill</li><li>Reboot stampede prevented by per-DAG catchup_policy (skip | latest_only | backfill_serial)</li></ul>
+            </div>
+            
+            <div class="card dim-card">
+                <div class="dim-header">
+                    <span class="dim-title">Prior-Art Differentiation</span>
+                    <span class="dim-score" style="color:#10b981">20/20 (stress-tested)</span>
+                </div>
+                <div class="progress-track">
+                    <div class="progress-fill" style="width:100%; background:#10b981"></div>
+                </div>
+                <p class="dim-summary">Unlike dagu-org/dagu (#412 orphan subprocess leaks) and SimpleHQ/simple-etcd-cron (which stalled due to etcd quorum complexity), EdgeCron enforces kernel-level cgroup v2 step isolation and deterministic power-outage catch-up.</p>
+                <ul class="edge-list"><li>Solves dagu-org/dagu#412 by killing the entire cgroup v2 tree on timeout or daemon restart</li><li>Avoids the etcd quorum split-brain failure mode that caused SimpleHQ/simple-etcd-cron to be archived</li></ul>
+            </div>
+            
+    </div>
+    <h2 class="section-title">Adversarial Red-Team Critique</h2>
+    
+                <div class="card critique-card" style="border-left: 4px solid #ef4444">
+                    <div class="crit-header">
+                        <h4>Embedded etcd Quorum Loss Halts All Local Jobs (Pivoted in Round 1)</h4>
+                        <span class="badge" style="background:#ef444422; color:#ef4444; border:1px solid #ef444455">CRITICAL</span>
+                    </div>
+                    <p><strong>Failure Mode / Attack Vector:</strong> In the initial pitch, a 3-node edge cluster losing 2 nodes or LAN switch connectivity loses Raft quorum and stops firing local jobs.</p>
+                    <p><strong>Architectural Mitigation:</strong> Replaced embedded etcd with autonomous per-node SQLite WAL (ADR-0001).</p>
+                </div>
+                
+                <div class="card critique-card" style="border-left: 4px solid #f97316">
+                    <div class="crit-header">
+                        <h4>Post-Outage Cron Stampede on Reboot</h4>
+                        <span class="badge" style="background:#f9731622; color:#f97316; border:1px solid #f9731655">HIGH</span>
+                    </div>
+                    <p><strong>Failure Mode / Attack Vector:</strong> After a 4-hour power outage, a naive scheduler fires 240 missed 1-minute jobs simultaneously, exhausting 1GB edge RAM.</p>
+                    <p><strong>Architectural Mitigation:</strong> Enforce explicit catchup_policy (default: latest_only) evaluated against the SQLite watermark before scheduling.</p>
+                </div>
+                
+  </section>
+
+  <!-- TAB 2: PRIOR ART & PAIN POINTS -->
+  <section id="tab-prior-art" class="tab-panel">
+    <h2 class="section-title">GitHub Prior-Art Matrix (Active Incumbents vs. Graveyard / Dormant Repos)</h2>
+    <div class="card" style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>Repository</th>
+            <th>Stars</th>
+            <th>Velocity</th>
+            <th>Last Push</th>
+            <th>Classification</th>
+            <th>Summary</th>
+          </tr>
+        </thead>
+        <tbody>
+          
+            <tr>
+                <td><a href="https://github.com/dagu-org/dagu" target="_blank" rel="noopener">dagu-org/dagu</a></td>
+                <td>⭐ 6,580</td>
+                <td>121.8/mo</td>
+                <td>2d ago</td>
+                <td><span class="badge badge-green">Active Incumbent</span></td>
+                <td>Yet another cron alternative with a Web UI, but with much more capabilities. Single binary, no DBMS required.</td>
+            </tr>
+            
+            <tr class="graveyard-row">
+                <td><a href="https://github.com/SimpleHQ/simple-etcd-cron" target="_blank" rel="noopener">SimpleHQ/simple-etcd-cron</a></td>
+                <td>⭐ 185</td>
+                <td>2.0/mo</td>
+                <td>1535d ago</td>
+                <td><span class="badge badge-red">Explicitly archived by maintainer</span></td>
+                <td>Distributed cron scheduler backed by etcd leases</td>
+            </tr>
+            
+        </tbody>
+      </table>
+    </div>
+
+    <h2 class="section-title">Pain-Point Mine (Verified Bugs &amp; Top-Voted Open Issues + Top Comments)</h2>
+    <div class="grid-2">
+      
+            <div class="card pp-card">
+                <div class="pp-header">
+                    <div>
+                        <span class="badge badge-red">BUG / FAILURE</span>
+                        <a href="https://github.com/dagu-org/dagu/issues/412" target="_blank" rel="noopener" class="pp-link">
+                            dagu-org/dagu#412
+                        </a>
+                    </div>
+                    <span class="pp-metric">👍 18 &nbsp;|&nbsp; 💬 9</span>
+                </div>
+                <h4>Orphaned child processes keep running when parent step times out or daemon receives SIGKILL</h4>
+                <p class="muted">When a DAG step spawns background subshells and hits its timeout, only the top-level shell PID is killed, leaving grand-child processes running indefinitely.</p>
+                <div class="comments-box"><div class="comment-quote"><strong>@linux-sre</strong> (👍 11): Standard Go os/exec Kill only targets the direct PID. On Linux, wrapping each step in a dedicated cgroup v2 scope and writing 1 to cgroup.kill is the only way to guarantee zero orphans.</div></div>
+            </div>
+            
+    </div>
+  </section>
+
+  <!-- TAB 3: STACK EXPLAINED, PROJECT MAINTENANCE & MEMORY ARCHITECTURE -->
+  <section id="tab-tooling-memory" class="tab-panel">
+    <h2 class="section-title">Stack Explained (What Job It Does, Why Needed, Alternative &amp; Now vs. Later)</h2>
+    <div class="card" style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>Tool</th>
+            <th>Now / Later</th>
+            <th>What Job It Does</th>
+            <th>Why This Project Needs It</th>
+            <th>What the Alternative Was</th>
+            <th>Config Proof</th>
+          </tr>
+        </thead>
+        <tbody>
+          
+                <tr>
+                    <td>
+                        <span class="badge badge-green">Go Modules (go.sum)</span>
+                        <div class="muted" style="font-size:0.78rem; margin-top:0.2rem">dependency-lock</div>
+                    </td>
+                    <td><span class="badge badge-green">NOW (Day 1)</span></td>
+                    <td><strong>Cryptographic dependency pinning and reproducible static binary builds</strong></td>
+                    <td>Built into Go toolchain; guarantees identical module checksums across dev and CI without external package managers</td>
+                    <td class="muted">Vendored directory (bloats git history unless air-gapped build is required)</td>
+                    <td><code>go.mod + go.sum</code></td>
+                </tr>
+                
+                <tr>
+                    <td>
+                        <span class="badge badge-green">modernc.org/sqlite</span>
+                        <div class="muted" style="font-size:0.78rem; margin-top:0.2rem">core-oss</div>
+                    </td>
+                    <td><span class="badge badge-green">NOW (Day 1)</span></td>
+                    <td><strong>CGo-free embedded SQLite3 engine in WAL mode</strong></td>
+                    <td>Allows compiling a pure static Linux binary (CGO_ENABLED=0) for amd64/arm64 edge gateways without glibc mismatches</td>
+                    <td class="muted">mattn/go-sqlite3 (requires CGo and matching target libc); etcd (rejected due to quorum loss)</td>
+                    <td><code>go.mod</code></td>
+                </tr>
+                
+                <tr>
+                    <td>
+                        <span class="badge badge-green">Docker (Multi-stage build + privileged cgroup test container)</span>
+                        <div class="muted" style="font-size:0.78rem; margin-top:0.2rem">container-runtime</div>
+                    </td>
+                    <td><span class="badge badge-green">NOW (Day 1)</span></td>
+                    <td><strong>Consistent cross-compilation and integration testing of Linux cgroup v2 teardown</strong></td>
+                    <td>Developers on macOS need a Linux kernel container to test /sys/fs/cgroup/edgecron/cgroup.kill behavior</td>
+                    <td class="muted">Bare host builds (cannot test Linux cgroups v2 natively on macOS)</td>
+                    <td><code>Dockerfile</code></td>
+                </tr>
+                
+                <tr>
+                    <td>
+                        <span class="badge badge-green">GitHub Actions + golangci-lint</span>
+                        <div class="muted" style="font-size:0.78rem; margin-top:0.2rem">ci-cd-quality</div>
+                    </td>
+                    <td><span class="badge badge-green">NOW (Day 1)</span></td>
+                    <td><strong>Automated unit tests, race-detector runs (go test -race), and static analysis on every PR</strong></td>
+                    <td>Catches concurrency bugs in the single-writer SQLite batch loop before merge</td>
+                    <td class="muted">Local pre-push hooks only (can be bypassed)</td>
+                    <td><code>.github/workflows/ci.yml</code></td>
+                </tr>
+                
+                <tr>
+                    <td>
+                        <span class="badge badge-green">Kubernetes / k3s Fleet Controller</span>
+                        <div class="muted" style="font-size:0.78rem; margin-top:0.2rem">orchestration-deploy</div>
+                    </td>
+                    <td><span class="badge badge-blue">LATER (Defer)</span></td>
+                    <td><strong>Centralized fleet rollout across 500+ edge gateways</strong></td>
+                    <td>Defer until V2; V1 targets single-binary systemd installation on constrained 1GB RAM nodes where k3s overhead (~500MB) is too heavy</td>
+                    <td class="muted">systemd unit file + atomic binary swap (used NOW for V1)</td>
+                    <td><code>Chart.yaml / k8s/ (Deferred)</code></td>
+                </tr>
+                
+        </tbody>
+      </table>
+    </div>
+
+    <h2 class="section-title">Config Files Proven in Scouted Repos (pyproject.toml, Dockerfile, .github/workflows, .pre-commit-config.yaml)</h2>
+    <div class="card" style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>Category</th>
+            <th>Tool Proven</th>
+            <th>Config File Evidence</th>
+            <th>Observed In Scouted Repos</th>
+          </tr>
+        </thead>
+        <tbody>
+          
+            <tr>
+                <td><span class="badge badge-blue">dependency-lock</span></td>
+                <td><strong>Go Modules (go.sum)</strong></td>
+                <td><code>go.sum</code></td>
+                <td>dagu-org/dagu</td>
+            </tr>
+            
+            <tr>
+                <td><span class="badge badge-blue">container-runtime</span></td>
+                <td><strong>Docker (Dockerfile)</strong></td>
+                <td><code>Dockerfile</code></td>
+                <td>dagu-org/dagu</td>
+            </tr>
+            
+            <tr>
+                <td><span class="badge badge-blue">ci-cd-quality</span></td>
+                <td><strong>GitHub Actions</strong></td>
+                <td><code>.github/workflows</code></td>
+                <td>dagu-org/dagu</td>
+            </tr>
+            
+        </tbody>
+      </table>
+    </div>
+
+    <h2 class="section-title">Memory, State &amp; Agent Communication Advisor</h2>
+    <div class="card">
+      <div class="dim-header">
+        <span class="dim-title">Selected Memory Strategy</span>
+        <span class="badge badge-green">transactional-db</span>
+      </div>
+      <p><strong>Agent / Component Communication Pattern:</strong> In-process typed Go channels feeding a single 100ms batch-writer goroutine into SQLite WAL</p>
+      <p><strong>Workflow Memory Lifecycle:</strong> Ticker reads watermark -&gt; Supervisor spawns cgroup step -&gt; Heartbeats batch-committed to SQLite WAL -&gt; Startup scanner reaps orphaned RUNNING rows</p>
+      <p><strong>Why This Memory Architecture (vs. RAG / Vector DB / Alternatives):</strong> EdgeCron stores structured state transitions and cron watermarks, not unstructured text; SQLite WAL provides ACID durability on power loss with 0MB idle overhead, whereas a Vector DB / RAG or external Postgres adds zero value and breaks offline autonomy</p>
+      <p class="rejected"><strong>Alternatives Considered:</strong> Embedded etcd Raft (rejected: loses quorum on 2-node WAN splits); Redis (volatile on power loss); Vector DB / RAG (not applicable to deterministic DAG state)</p>
+      <h4 style="margin-top:0.85rem">Anticipated Memory Failure Modes &amp; Mitigations</h4>
+      <ul class='edge-list'><li>⚠️ SQLITE_BUSY lock contention when 50+ steps emit heartbeats concurrently -&gt; Mitigated by funneling all writes through a single 100ms batching goroutine</li><li>⚠️ Stale RUNNING state after sudden power pull -&gt; Mitigated by startup reconciliation against /sys/fs/cgroup/edgecron/&lt;run_id&gt;</li></ul>
+    </div>
+
+    <h2 class="section-title">Scouted Open-Source Building Blocks (GitHub Libraries &amp; SDKs)</h2>
+    <div class="card" style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>Repository</th>
+            <th>Stars</th>
+            <th>License</th>
+            <th>Language</th>
+            <th>Last Push</th>
+            <th>Summary</th>
+          </tr>
+        </thead>
+        <tbody>
+          
+            <tr>
+                <td><a href="https://github.com/containerd/cgroups" target="_blank" rel="noopener">containerd/cgroups</a></td>
+                <td>⭐ 1,240</td>
+                <td><code>Apache-2.0</code></td>
+                <td>Go</td>
+                <td>9d ago</td>
+                <td>Go package for creating, managing, inspecting, and destroying Linux cgroups v1 and v2</td>
+            </tr>
+            
+            <tr>
+                <td><a href="https://gitlab.com/cznic/sqlite" target="_blank" rel="noopener">modernc.org/sqlite</a></td>
+                <td>⭐ 2,890</td>
+                <td><code>BSD-3-Clause</code></td>
+                <td>Go</td>
+                <td>4d ago</td>
+                <td>CGo-free pure Go SQLite3 driver with full WAL concurrency support</td>
+            </tr>
+            
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- TAB 4: SYSTEM DESIGN & MERMAID -->
+  <section id="tab-design" class="tab-panel">
+    <h2 class="section-title">System Topology Diagram</h2>
+    <div class="mermaid-box">
+      <pre class="mermaid">flowchart TD
+    YAML[&quot;Declarative DAG YAML&quot;] --&gt; Ticker[&quot;Cron &amp; Catch-Up Watermark Engine&quot;]
+    Ticker --&gt; Runner[&quot;Step Supervisor&quot;]
+    Runner --&gt;|&quot;Create scope &amp; memory.max&quot;| Cgroup[&quot;/sys/fs/cgroup/edgecron/run_id/&quot;]
+    Runner --&gt;|&quot;State Events&quot;| BatchWriter[&quot;Single-Writer Batch Loop (100ms)&quot;]
+    BatchWriter --&gt; SQLite[(&quot;Local SQLite3 (WAL Mode)&quot;)]</pre>
+      <details class="raw-mermaid">
+        <summary>View raw Mermaid source (offline fallback)</summary>
+        <pre>flowchart TD
+    YAML[&quot;Declarative DAG YAML&quot;] --&gt; Ticker[&quot;Cron &amp; Catch-Up Watermark Engine&quot;]
+    Ticker --&gt; Runner[&quot;Step Supervisor&quot;]
+    Runner --&gt;|&quot;Create scope &amp; memory.max&quot;| Cgroup[&quot;/sys/fs/cgroup/edgecron/run_id/&quot;]
+    Runner --&gt;|&quot;State Events&quot;| BatchWriter[&quot;Single-Writer Batch Loop (100ms)&quot;]
+    BatchWriter --&gt; SQLite[(&quot;Local SQLite3 (WAL Mode)&quot;)]</pre>
+      </details>
+    </div>
+
+    <h2 class="section-title">Core Request Lifecycle (Sequence Diagram)</h2>
+    <div class="mermaid-box">
+      <pre class="mermaid">sequenceDiagram
+    participant Boot as Daemon Startup / Ticker
+    participant DB as SQLite WAL (Single Writer)
+    participant CG as Linux cgroup v2
+    participant Step as Child Process Tree
+    Boot-&gt;&gt;DB: Read last_Watermark &amp; evaluate catchup_policy
+    Boot-&gt;&gt;CG: mkdir /sys/fs/cgroup/edgecron/step_01 (set memory.max)
+    CG-&gt;&gt;Step: Clone process into cgroup.procs
+    alt Step Succeeds
+        Step--&gt;&gt;Boot: Exit 0
+    else Timeout or Crash
+        Boot-&gt;&gt;CG: Write 1 to cgroup.kill (reaps all grandchildren)
+    end
+    Boot-&gt;&gt;DB: Commit final step status &amp; advance watermark</pre>
+      <details class="raw-mermaid">
+        <summary>View raw Mermaid source (offline fallback)</summary>
+        <pre>sequenceDiagram
+    participant Boot as Daemon Startup / Ticker
+    participant DB as SQLite WAL (Single Writer)
+    participant CG as Linux cgroup v2
+    participant Step as Child Process Tree
+    Boot-&gt;&gt;DB: Read last_Watermark &amp; evaluate catchup_policy
+    Boot-&gt;&gt;CG: mkdir /sys/fs/cgroup/edgecron/step_01 (set memory.max)
+    CG-&gt;&gt;Step: Clone process into cgroup.procs
+    alt Step Succeeds
+        Step--&gt;&gt;Boot: Exit 0
+    else Timeout or Crash
+        Boot-&gt;&gt;CG: Write 1 to cgroup.kill (reaps all grandchildren)
+    end
+    Boot-&gt;&gt;DB: Commit final step status &amp; advance watermark</pre>
+      </details>
+    </div>
+
+    <h2 class="section-title">Architecture Trade-Off Matrix</h2>
+    <div class="card" style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>Option</th>
+            <th>Pros</th>
+            <th>Cons</th>
+            <th>Verdict</th>
+          </tr>
+        </thead>
+        <tbody>
+          
+            <tr>
+                <td><strong>Autonomous SQLite WAL + cgroups v2</strong></td>
+                <td>100% offline availability, zero orphan leaks</td>
+                <td>Linux-only (requires kernel &gt;= 5.14)</td>
+                <td>Selected (ADR-0001, ADR-0002)</td>
+            </tr>
+            
+            <tr>
+                <td><strong>Embedded etcd Raft Cluster</strong></td>
+                <td>Cross-node leader election</td>
+                <td>Halts local jobs on network partition; high operational complexity</td>
+                <td>Rejected in Round 1</td>
+            </tr>
+            
+            <tr>
+                <td><strong>Unmodified dagu-org/dagu</strong></td>
+                <td>Mature UI and YAML format</td>
+                <td>No built-in cgroup v2 step scopes or power-outage catchup policies</td>
+                <td>Inspected as Prior Art</td>
+            </tr>
+            
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- TAB 5: DECISION LEDGER & IMPLEMENTATION PLAN -->
+  <section id="tab-ledger" class="tab-panel">
+    <h2 class="section-title">Decision Ledger (Locked ADRs &amp; Rejected Paths)</h2>
+    
+                <div class="card adr-card">
+                    <div class="adr-header">
+                        <span class="badge badge-blue">ADR-0001</span>
+                        <h4>Autonomous Local SQLite WAL Over Embedded etcd Raft</h4>
+                        <span class="muted">docs/adr/0001-autonomous-local-sqlite-wal-over-embedded-etcd-raft.md</span>
+                    </div>
+                    <p><strong>Locked Decision:</strong> Run each edge gateway as an autonomous scheduler backed by local SQLite WAL instead of a multi-node etcd Raft cluster.</p>
+                    <p><strong>Rationale:</strong> Edge gateways experience frequent WAN/LAN partitions; losing Raft quorum must never halt local cron execution.</p>
+                    <p class='rejected'><strong>Rejected Alternatives:</strong> Embedded go.etcd.io/etcd Raft cluster across edge nodes</p>
+                </div>
+                
+                <div class="card adr-card">
+                    <div class="adr-header">
+                        <span class="badge badge-blue">ADR-0002</span>
+                        <h4>Linux cgroups v2 Per-Step Process Isolation</h4>
+                        <span class="muted">docs/adr/0002-linux-cgroups-v2-per-step-process-isolation.md</span>
+                    </div>
+                    <p><strong>Locked Decision:</strong> Spawn every DAG step inside a dedicated /sys/fs/cgroup/edgecron/&lt;run_id&gt;/&lt;step_id&gt; scope with memory.max and teardown via cgroup.kill.</p>
+                    <p><strong>Rationale:</strong> Guarantees zero orphan grandchildren processes after timeouts or SIGKILL (addressing dagu-org/dagu#412).</p>
+                    <p class='rejected'><strong>Rejected Alternatives:</strong> Standard Go os/exec cmd.Process.Kill()</p>
+                </div>
+                
+
+    <h2 class="section-title">Implementation Plan</h2>
+    <div class="card">
+      <ol class='step-list'><li>Implement SQLite WAL schema and single-writer batching state machine</li><li>Implement power-loss watermark calculator (skip, latest_only, backfill_serial)</li><li>Implement Linux cgroup v2 scope manager with memory.max and cgroup.kill teardown</li><li>Add crash-recovery orphan reaper on daemon startup</li></ol>
+    </div>
+  </section>
+</div>
+
+<script>
+  const SPEC_MARKDOWN = "# System Design Specification: EdgeCron\n\n- **Readiness Score:** 100% (Evidence-Verified)\n- **Target Runtime:** Go 1.23 (Linux amd64/arm64)\n- **Tech Stack:** Go, SQLite3 WAL, Linux cgroups v2, systemd\n\n## 1. Executive Summary\n\nAutonomous Linux edge DAG scheduler with cgroup v2 step isolation and deterministic power-loss catch-up policies.\n\n## 2. Architectural Dimensions & Stress-Tested Edge Cases\n\n### Problem & User Pain (`problem` \u2014 20/20)\nIndustrial and retail edge Linux gateways need reliable local job scheduling without heavy Python/Postgres stacks or fragile cross-node Raft quorums.\n\n**Stress-Tested Edge Cases:**\n- 48-hour WAN blackout at a retail store where local backups and sensor aggregation must still execute on schedule\n- Hard power loss mid-step followed by system reboot 4 hours later\n\n### Scope & Non-Goals (`scope` \u2014 20/20)\nSingle-node static Go binary managing declarative YAML DAGs with per-step cgroup v2 limits; explicitly excludes multi-node Raft scheduling in V1.\n\n**Stress-Tested Edge Cases:**\n- Non-goal: cross-node distributed task migration or distributed locking\n- Boundary: Linux kernel >= 5.14 with unified cgroup v2 hierarchy mounted at /sys/fs/cgroup\n\n### State, Memory & Agent Communication (`memory` \u2014 20/20)\nSingle local SQLite database in WAL mode storing DAG run history, step state transitions, and last-scheduled watermarks via a single writer goroutine.\n\n**Stress-Tested Edge Cases:**\n- 50+ concurrent step heartbeats serialized through a 100ms batching channel to eliminate SQLITE_BUSY errors\n- Crash recovery on startup scans RUNNING steps whose cgroup no longer exists and marks them FAILED_ORPHANED\n\n### Bottlenecks & Failure Modes (`bottlenecks` \u2014 20/20)\nEliminates runaway memory/CPU starvation and orphan subprocesses on 1GB RAM edge nodes using per-step cgroup.kill and memory.max limits.\n\n**Stress-Tested Edge Cases:**\n- Double-forked bash subprocess reaped deterministically via /sys/fs/cgroup/edgecron/<step-id>/cgroup.kill\n- Reboot stampede prevented by per-DAG catchup_policy (skip | latest_only | backfill_serial)\n\n### Prior-Art Differentiation (`differentiation` \u2014 20/20)\nUnlike dagu-org/dagu (#412 orphan subprocess leaks) and SimpleHQ/simple-etcd-cron (which stalled due to etcd quorum complexity), EdgeCron enforces kernel-level cgroup v2 step isolation and deterministic power-outage catch-up.\n\n**Stress-Tested Edge Cases:**\n- Solves dagu-org/dagu#412 by killing the entire cgroup v2 tree on timeout or daemon restart\n- Avoids the etcd quorum split-brain failure mode that caused SimpleHQ/simple-etcd-cron to be archived\n\n### Memory, State & Agent Communication Workflow\n\n- **Selected Memory Strategy:** `transactional-db`\n- **Agent / Component Communication Pattern:** In-process typed Go channels feeding a single 100ms batch-writer goroutine into SQLite WAL\n- **Workflow Memory Lifecycle:** Ticker reads watermark -> Supervisor spawns cgroup step -> Heartbeats batch-committed to SQLite WAL -> Startup scanner reaps orphaned RUNNING rows\n- **Why Chosen (vs. RAG / Vector DB / Alternatives):** EdgeCron stores structured state transitions and cron watermarks, not unstructured text; SQLite WAL provides ACID durability on power loss with 0MB idle overhead, whereas a Vector DB / RAG or external Postgres adds zero value and breaks offline autonomy\n- **Alternatives Considered:** Embedded etcd Raft (rejected: loses quorum on 2-node WAN splits); Redis (volatile on power loss); Vector DB / RAG (not applicable to deterministic DAG state)\n\n- \u26a0\ufe0f **Memory Failure Mode & Mitigation:** SQLITE_BUSY lock contention when 50+ steps emit heartbeats concurrently -> Mitigated by funneling all writes through a single 100ms batching goroutine\n- \u26a0\ufe0f **Memory Failure Mode & Mitigation:** Stale RUNNING state after sudden power pull -> Mitigated by startup reconciliation against /sys/fs/cgroup/edgecron/<run_id>\n\n## 3. Stack Explained (Config-Verified Tooling, Alternatives & Now vs. Later)\n\n| Tool | Stage (`Now` / `Later`) | What Job It Does | Why Needed | Alternative Considered | Config Proof in Prior-Art |\n| :--- | :---: | :--- | :--- | :--- | :--- |\n| **Go Modules (go.sum)** (`dependency-lock`) | **NOW** | Cryptographic dependency pinning and reproducible static binary builds | Built into Go toolchain; guarantees identical module checksums across dev and CI without external package managers | Vendored directory (bloats git history unless air-gapped build is required) | `go.mod + go.sum` |\n| **modernc.org/sqlite** (`core-oss`) | **NOW** | CGo-free embedded SQLite3 engine in WAL mode | Allows compiling a pure static Linux binary (CGO_ENABLED=0) for amd64/arm64 edge gateways without glibc mismatches | mattn/go-sqlite3 (requires CGo and matching target libc); etcd (rejected due to quorum loss) | `go.mod` |\n| **Docker (Multi-stage build + privileged cgroup test container)** (`container-runtime`) | **NOW** | Consistent cross-compilation and integration testing of Linux cgroup v2 teardown | Developers on macOS need a Linux kernel container to test /sys/fs/cgroup/edgecron/cgroup.kill behavior | Bare host builds (cannot test Linux cgroups v2 natively on macOS) | `Dockerfile` |\n| **GitHub Actions + golangci-lint** (`ci-cd-quality`) | **NOW** | Automated unit tests, race-detector runs (go test -race), and static analysis on every PR | Catches concurrency bugs in the single-writer SQLite batch loop before merge | Local pre-push hooks only (can be bypassed) | `.github/workflows/ci.yml` |\n| **Kubernetes / k3s Fleet Controller** (`orchestration-deploy`) | **LATER** | Centralized fleet rollout across 500+ edge gateways | Defer until V2; V1 targets single-binary systemd installation on constrained 1GB RAM nodes where k3s overhead (~500MB) is too heavy | systemd unit file + atomic binary swap (used NOW for V1) | `Chart.yaml / k8s/ (Deferred)` |\n\n### Config Files Verified in Scouted Incumbent Repos\n\n| Category | Tool Proven | Config File Inspected | Observed In Repos |\n| :--- | :--- | :--- | :--- |\n| `dependency-lock` | **Go Modules (go.sum)** | `go.sum` | `dagu-org/dagu` |\n| `container-runtime` | **Docker (Dockerfile)** | `Dockerfile` | `dagu-org/dagu` |\n| `ci-cd-quality` | **GitHub Actions** | `.github/workflows` | `dagu-org/dagu` |\n\n### Scouted Open-Source Building Blocks (GitHub)\n\n| Repository | Stars | License | Language | Last Push | Description |\n| :--- | :---: | :---: | :---: | :---: | :--- |\n| [containerd/cgroups](https://github.com/containerd/cgroups) | \u2b50 1240 | `Apache-2.0` | Go | 9d ago | Go package for creating, managing, inspecting, and destroying Linux cgroups v1 and v2 |\n| [modernc.org/sqlite](https://gitlab.com/cznic/sqlite) | \u2b50 2890 | `BSD-3-Clause` | Go | 4d ago | CGo-free pure Go SQLite3 driver with full WAL concurrency support |\n\n## 4. Adversarial Red-Team Critiques & Mitigations\n\n### [CRITICAL] Embedded etcd Quorum Loss Halts All Local Jobs (Pivoted in Round 1)\n- **Failure Mode / Attack Vector:** In the initial pitch, a 3-node edge cluster losing 2 nodes or LAN switch connectivity loses Raft quorum and stops firing local jobs.\n- **Architectural Mitigation:** Replaced embedded etcd with autonomous per-node SQLite WAL (ADR-0001).\n\n### [HIGH] Post-Outage Cron Stampede on Reboot\n- **Failure Mode / Attack Vector:** After a 4-hour power outage, a naive scheduler fires 240 missed 1-minute jobs simultaneously, exhausting 1GB edge RAM.\n- **Architectural Mitigation:** Enforce explicit catchup_policy (default: latest_only) evaluated against the SQLite watermark before scheduling.\n\n## 5. GitHub Prior-Art & Mined Pain Points\n\n| Repository | Stars | Velocity | Last Push | Status | Summary |\n| :--- | :---: | :---: | :---: | :--- | :--- |\n| [dagu-org/dagu](https://github.com/dagu-org/dagu) | \u2b50 6580 | 121.8/mo | 2d ago | Active Incumbent | Yet another cron alternative with a Web UI, but with much more capabilities. Single binary, no DBMS required. |\n| [SimpleHQ/simple-etcd-cron](https://github.com/SimpleHQ/simple-etcd-cron) | \u2b50 185 | 2.0/mo | 1535d ago | Explicitly archived by maintainer | Distributed cron scheduler backed by etcd leases |\n\n### Verified User Pain Points from Open Issues\n\n- **[BUG/FAILURE] [dagu-org/dagu#412](https://github.com/dagu-org/dagu/issues/412) \u2014 Orphaned child processes keep running when parent step times out or daemon receives SIGKILL** (\ud83d\udc4d 18 | \ud83d\udcac 9)\n  > When a DAG step spawns background subshells and hits its timeout, only the top-level shell PID is killed, leaving grand-child processes running indefinitely.\n  > \ud83d\udcac **@linux-sre** (\ud83d\udc4d 11): Standard Go os/exec Kill only targets the direct PID. On Linux, wrapping each step in a dedicated cgroup v2 scope and writing 1 to cgroup.kill is the only way to guarantee zero orphans.\n\n## 6. System Architecture Diagrams\n\n### System Topology\n\n```mermaid\nflowchart TD\n    YAML[\"Declarative DAG YAML\"] --> Ticker[\"Cron & Catch-Up Watermark Engine\"]\n    Ticker --> Runner[\"Step Supervisor\"]\n    Runner -->|\"Create scope & memory.max\"| Cgroup[\"/sys/fs/cgroup/edgecron/run_id/\"]\n    Runner -->|\"State Events\"| BatchWriter[\"Single-Writer Batch Loop (100ms)\"]\n    BatchWriter --> SQLite[(\"Local SQLite3 (WAL Mode)\")]\n```\n\n### Request / Execution Lifecycle\n\n```mermaid\nsequenceDiagram\n    participant Boot as Daemon Startup / Ticker\n    participant DB as SQLite WAL (Single Writer)\n    participant CG as Linux cgroup v2\n    participant Step as Child Process Tree\n    Boot->>DB: Read last_Watermark & evaluate catchup_policy\n    Boot->>CG: mkdir /sys/fs/cgroup/edgecron/step_01 (set memory.max)\n    CG->>Step: Clone process into cgroup.procs\n    alt Step Succeeds\n        Step-->>Boot: Exit 0\n    else Timeout or Crash\n        Boot->>CG: Write 1 to cgroup.kill (reaps all grandchildren)\n    end\n    Boot->>DB: Commit final step status & advance watermark\n```\n\n### Architecture Trade-Off Matrix\n\n| Option | Pros | Cons | Verdict |\n| :--- | :--- | :--- | :--- |\n| **Autonomous SQLite WAL + cgroups v2** | 100% offline availability, zero orphan leaks | Linux-only (requires kernel >= 5.14) | Selected (ADR-0001, ADR-0002) |\n| **Embedded etcd Raft Cluster** | Cross-node leader election | Halts local jobs on network partition; high operational complexity | Rejected in Round 1 |\n| **Unmodified dagu-org/dagu** | Mature UI and YAML format | No built-in cgroup v2 step scopes or power-outage catchup policies | Inspected as Prior Art |\n\n## 7. Decision Ledger (ADRs)\n\n### ADR-0001: Autonomous Local SQLite WAL Over Embedded etcd Raft\n- **Decision:** Run each edge gateway as an autonomous scheduler backed by local SQLite WAL instead of a multi-node etcd Raft cluster.\n- **Rationale:** Edge gateways experience frequent WAN/LAN partitions; losing Raft quorum must never halt local cron execution.\n- **Rejected Alternatives:** Embedded go.etcd.io/etcd Raft cluster across edge nodes\n\n### ADR-0002: Linux cgroups v2 Per-Step Process Isolation\n- **Decision:** Spawn every DAG step inside a dedicated /sys/fs/cgroup/edgecron/<run_id>/<step_id> scope with memory.max and teardown via cgroup.kill.\n- **Rationale:** Guarantees zero orphan grandchildren processes after timeouts or SIGKILL (addressing dagu-org/dagu#412).\n- **Rejected Alternatives:** Standard Go os/exec cmd.Process.Kill()\n\n## 8. Implementation Plan\n\n1. Implement SQLite WAL schema and single-writer batching state machine\n2. Implement power-loss watermark calculator (skip, latest_only, backfill_serial)\n3. Implement Linux cgroup v2 scope manager with memory.max and cgroup.kill teardown\n4. Add crash-recovery orphan reaper on daemon startup\n";
+  if (typeof mermaid !== 'undefined') {
+    mermaid.initialize({ startOnLoad: true, theme: 'dark', securityLevel: 'loose' });
+  }
+  function showTab(tabId, btn) {
+    document.querySelectorAll('.tab-panel').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+    document.getElementById(tabId).classList.add('active');
+    btn.classList.add('active');
+  }
+  function copySpecMarkdown(btn) {
+    navigator.clipboard.writeText(SPEC_MARKDOWN).then(() => {
+      const orig = btn.textContent;
+      btn.textContent = "Copied SPEC.md to Clipboard!";
+      setTimeout(() => { btn.textContent = orig; }, 2000);
+    });
+  }
+</script>
+</body>
+</html>

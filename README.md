@@ -1,142 +1,187 @@
-# PreFlight ✈️
+<div align="center">
+
+# ✈️ PreFlight
+
+**Validate your architecture, scout GitHub prior art, lock your stack, and generate ready-to-code tickets — before writing a single line of code.**
 
 [![CI](https://github.com/thilak15/preflight/actions/workflows/ci.yml/badge.svg)](https://github.com/thilak15/preflight/actions/workflows/ci.yml)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Dependencies](https://img.shields.io/badge/Dependencies-Zero%20(Stdlib%20Only)-10b981)](#install)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
-**Pre-Implementation Architecture Validator, GitHub Prior-Art Scout & System Design Specification Generator.**
+[**What It Does**](#-what-preflight-does) · [**Quick Start**](#-quick-start) · [**5-Dimension Gate**](#-the-5-dimension-readiness-gate) · [**Generated Artifacts**](#-what-gets-generated) · [**Case Study**](./examples/edge-cron-scheduler/CASE_STUDY.md) · [**CLI Reference**](#-cli-reference)
 
-PreFlight is a self-contained Agent Skill (`SKILL.md`) paired with three deterministic, zero-dependency Python helper scripts (`state.py`, `scout.py`, `render_blueprint.py`) that run **before** you write code. Instead of acting as a "yes-man" assistant that praises half-baked ideas, PreFlight interrogates your architecture in structured Socratic rounds, queries the GitHub Search and Issues APIs to uncover competing repositories and real user pain points, enforces programmatic evidence gates on architectural decisions, and compiles both an interactive dark-mode `blueprint_report.html` and a clean `.preflight/SPEC.md` specification.
-
----
-
-## See a Real PreFlight Pivot (`examples/edge-cron-scheduler/`)
-
-Want to see how PreFlight actually changes a flawed system design before code is written? Check out the complete before/after case study in [`examples/edge-cron-scheduler/`](./examples/edge-cron-scheduler/):
-
-- **[`CASE_STUDY.md`](./examples/edge-cron-scheduler/CASE_STUDY.md)**: Full Socratic transcript showing how a developer's initial pitch (*"distributed edge cron over embedded etcd Raft"*) was challenged by network-partition edge cases and live GitHub prior art (`dagu-org/dagu#412` orphan subprocess leaks, archived `SimpleHQ/simple-etcd-cron`) and pivoted into an autonomous SQLite WAL + Linux `cgroups v2` step-isolated design.
-- **[`SPEC.md`](./examples/edge-cron-scheduler/SPEC.md)**: The auto-exported Markdown specification produced by `render_blueprint.py`.
-- **[`blueprint_report.html`](./examples/edge-cron-scheduler/blueprint_report.html)**: The generated 4-tab HTML Blueprint with Mermaid topology/sequence diagrams and offline source fallbacks.
+</div>
 
 ---
 
-## Architecture & How It Works
+## Why PreFlight?
 
-```mermaid
-flowchart TD
-    Dev(["Developer"]) -->|"/preflight or idea pitch"| Skill["PreFlight Agent Skill (SKILL.md)"]
-    Skill -->|"Round 1..N Frontier Questions"| Griller["1. Socratic Griller & Evidence Gate (state.py)"]
-    Skill -->|"Inline Term Resolution"| Glossary["GLOSSARY.md (Domain Model)"]
-    Griller -->|"Programmatic Validation"| StateJSON[(".preflight/state.json & decisions.json")]
-    Griller -->|"add-decision"| ADRs["docs/adr/NNNN-*.md"]
-    Skill -->|"After Round 1 (scout.py)"| Scout["2. GitHub Deep-Scout & Pain-Point Miner"]
-    Scout <-->|"7-day TTL"| CacheDB[(".preflight/cache.db SQLite3")]
-    Scout -->|"Incumbents, Dormant Repos, Bug/Top Issues + Comments"| PriorArtJSON[(".preflight/prior-art.json")]
-    PriorArtJSON -->|"Required Evidence for Differentiation Score"| Griller
-    StateJSON & PriorArtJSON -->|"Unlocked Gate + Diagrams (render_blueprint.py)"| Outputs["3. blueprint_report.html + .preflight/SPEC.md"]
-```
+Most AI coding assistants act like eager "yes-men": pitch an idea and they immediately scaffold code on shaky assumptions, pick a Vector DB when SQLite FTS5 would do, or reinvent a library that already has 10k stars on GitHub.
 
-### 1. Evidence-Gated 5-Dimension Rubric (`scripts/state.py`)
-PreFlight evaluates projects across five dimensions (`20%` each, `0%–100%` total):
-1. **Problem & User Pain (`problem`)**: Concrete failure mode of the status quo and target user workflow.
-2. **Scope & Non-Goals (`scope`)**: Explicit V1 boundaries and seams.
-3. **State & Persistence (`memory`)**: Data model, caching, state lifecycle, and (for AI apps) context/session state.
-4. **Bottlenecks & Failure Modes (`bottlenecks`)**: Rate limits, latency, single points of failure, and mitigations.
-5. **Prior-Art Differentiation (`differentiation`)**: How the architecture solves real complaints mined from competing GitHub repos.
-
-**Programmatic Anti-Theater Enforcement:**
-Unlike prompt-only skills where an LLM can award itself `100%` with one-line summaries, `state.py` enforces strict programmatic rules:
-- Scoring `20/20` on any dimension **fails** unless the summary is substantive ($\ge 40$ chars) and includes at least **2 concrete stress-tested edge cases** (`--edge-case`).
-- Scoring `differentiation > 0` **fails** unless `.preflight/prior-art.json` exists from a real `scout.py` run, and scoring `20/20` **fails** unless the summary or edge cases explicitly cite at least one discovered repository (`owner/repo`) from `prior-art.json`.
-- Unlocking the **Readiness Gate** additionally requires $\ge 80\%$ total score, zero `0%` dimensions, $\ge 1$ recorded Architecture Decision Record (`add-decision`), and $\ge 1$ recorded Red-Team Critique (`add-critique`).
-
-### 2. GitHub Deep-Scout & Pain-Point Miner (`scripts/scout.py`)
-- **Authentication & Rate-Limit Inspection**: Authenticates via `gh auth token` $\to$ `GITHUB_TOKEN` $\to$ unauthenticated fallback, and inspects `X-RateLimit-Remaining`, `X-RateLimit-Limit`, and `Retry-After` headers for GitHub's Search API (**30 requests/minute** authenticated, **10 requests/minute** unauthenticated).
-- **SQLite Caching (`.preflight/cache.db`)**: Caches all repository, issue, and comment payloads locally with a 7-day TTL.
-- **Documented Repository Filtering**: Scopes free-text queries to `in:name,description` by default (preventing full-README keyword-stuffing false positives) while preserving Markdown-only repositories (`language: None`) so documentation and agent skill repos are never dropped.
-- **Two-Pass Issue & Top-Comment Mining**:
-  - **Pass A (`top_voted`)**: Top open issues sorted by `reactions-+1-desc`.
-  - **Pass B (`bug_or_failure`)**: Open `label:bug` issues sorted by `reactions-+1-desc` to surface real engineering failures rather than feature-tracker threads.
-  - **Engagement Threshold**: Excludes 0-vote, low-comment noise (`reactions_plus_one >= 1` or `comments >= 2` required).
-  - **Top Comments (`top_comments`)**: Fetches the highest-voted comments on top issues so you see actual developer root-cause analyses and workarounds.
-
-### 3. Blueprint & Specification Renderer (`scripts/render_blueprint.py`)
-- Refuses to ship placeholder diagrams behind a passed gate: `topology_mermaid` and `sequence_mermaid` must be populated via `state.py set-design`.
-- Generates **two synchronized outputs**:
-  1. `blueprint_report.html`: Dark-mode 4-tab dashboard with Mermaid.js diagrams, collapsible `<details>` raw Mermaid source blocks (for offline viewing), and a 1-click **"Copy Spec Markdown"** button.
-  2. `.preflight/SPEC.md`: Clean, git-ready Markdown specification containing the executive summary, stress-tested edge cases, red-team critiques, prior-art matrix, Mermaid diagrams, and ADR ledger.
+**PreFlight** runs *before* implementation. It combines a structured Socratic interview with a live GitHub prior-art & config-file scout to stress-test your design, lock architectural decisions, and output a complete blueprint and ordered issue queue.
 
 ---
 
-## Installation
+## ✨ What PreFlight Does
 
-### Option A: One-Command Install (`skills.sh` / Claude Code / Cursor / Codex)
+| Stage | Capability | How It Works |
+| :--- | :--- | :--- |
+| **1. Interrogate** | **Socratic Frontier Grilling** | Challenges your idea across 5 dimensions (`Problem`, `Scope`, `Memory`, `Bottlenecks`, `Differentiation`) with concrete `➡️` recommended answers. |
+| **2. Scout** | **GitHub Prior-Art & Pain-Point Miner** | Finds **Active Incumbents**, **Graveyard Repos** ($>365\text{d}$ dormant), **OSS Building Blocks**, and top-voted open issues + developer comments. |
+| **3. Inspect** | **"Stack Explained" (`Now` vs. `Later`)** | Inspects real repo config files (`pyproject.toml`, `Dockerfile`, `.github/workflows`, `.pre-commit-config.yaml`) and records every tool's job, why it's needed now, the alternative, and **`NOW`** vs. **`LATER`**. |
+| **4. Advise** | **Memory & Agent Communication** | Prescribes the right state strategy (`stateless`, `transactional-db`, `lexical-fts`, `rag-vector-db`, `hybrid-search`, `episodic-agent-state`), handoff schema, and memory failure modes. |
+| **5. Compile** | **Blueprint, Spec & Ordered Tickets** | Enforces an **80% Evidence Gate**, then compiles `blueprint_report.html`, `.preflight/SPEC.md`, `.preflight/STACK.md`, and dependency-ordered tickets in `.preflight/issues/01-*.md`. |
 
+---
+
+## 🚀 Quick Start
+
+### 1. Install
+
+**Via `skills.sh` (Claude Code / Cursor / Codex / Antigravity):**
 ```bash
 npx skills@latest add thilak15/preflight
 ```
 
-### Option B: Clone & Install Globally (Antigravity / Gemini CLI / Claude Code)
-
+**Or clone directly (Zero dependencies — Python 3.10+ standard library only):**
 ```bash
 git clone https://github.com/thilak15/preflight.git
 cd preflight
-
-# Install globally for Antigravity / Gemini
 cp -R skills/preflight ~/.gemini/config/skills/preflight
 ```
 
-### Requirements
-- **Python 3.10+** (100% Python standard library — zero `pip install` packages required).
-- Optional: [GitHub CLI (`gh`)](https://cli.github.com/) authenticated (`gh auth login`) or `GITHUB_TOKEN` env var for the authenticated GitHub Search API quota (`30 req/min` vs. `10 req/min` unauthenticated).
+> **Tip:** Authenticate [GitHub CLI](https://cli.github.com/) (`gh auth login`) or set `GITHUB_TOKEN` for the full `30 req/min` GitHub Search API quota (falls back to `10 req/min` unauthenticated).
 
----
-
-## Usage
-
-### 1. Inside Your AI Coding Agent
-Invoke `/preflight` in any workspace before writing code:
+### 2. Run Inside Your Agent
 
 ```text
 /preflight I want to build <your project idea>
 ```
 
-### 2. Direct CLI Usage
+Want to run a **brand-new idea** in the same folder or **re-run from a clean slate**?
+```bash
+python3 skills/preflight/scripts/state.py --workspace . reset
+```
+
+---
+
+## 🧭 Workflow Overview
+
+```mermaid
+flowchart LR
+    A(["💡 Idea Pitch"]) --> B["1. Socratic Grilling\n(state.py)"]
+    B --> C["2. GitHub & Config Scout\n(scout.py + cache.db)"]
+    C --> D["3. Stack Explained &\nMemory Advisor"]
+    D --> E{"🔒 80% Evidence\nGate Unlocked?"}
+    E -->|"No"| B
+    E -->|"Yes"| F["4. Blueprint + SPEC.md +\nOrdered Tickets (.preflight/issues/)"]
+```
+
+---
+
+## 🛡️ The 5-Dimension Readiness Gate
+
+Unlike prompt-only skills where an LLM can grade itself `100%` with one-line summaries, `state.py` enforces **programmatic anti-theater checks** before unlocking Blueprint generation:
+
+| Dimension | Weight | Required to Score `20/20` (Programmatically Enforced) |
+| :--- | :---: | :--- |
+| **1. Problem & User Pain** (`problem`) | `20%` | Substantive summary ($\ge 40$ chars) + $\ge 2$ stress-tested `--edge-case` scenarios |
+| **2. Scope & Non-Goals** (`scope`) | `20%` | Explicit V1 non-goals + $\ge 2$ hard boundary `--edge-case` items |
+| **3. State, Memory & Agent Comm** (`memory`) | `20%` | Memory strategy (`stateless` / `SQLite` / `FTS5` / `RAG` / `Hybrid`), agent handoff pattern, and $\ge 2$ failure modes |
+| **4. Bottlenecks & Failure Modes** (`bottlenecks`) | `20%` | Rate limits, latency, SPOFs, and $\ge 2$ stress-tested mitigations |
+| **5. Prior-Art Differentiation** (`differentiation`) | `20%` | Requires `.preflight/prior-art.json` from `scout.py` and must explicitly cite $\ge 1$ discovered `owner/repo` |
+
+**Gate Unlock Rule:** Total score $\ge 80\%$, zero dimensions at `0%`, $\ge 1$ ADR (`add-decision`), $\ge 1$ Red-Team Critique (`add-critique`), and both Mermaid diagrams (`topology` + `sequence`) populated.
+
+---
+
+## 📦 What Gets Generated
+
+When the Readiness Gate unlocks and `render_blueprint.py` runs, PreFlight produces a complete engineering package:
+
+| Artifact | Purpose |
+| :--- | :--- |
+| **`blueprint_report.html`** | Interactive 5-tab dark-mode HTML dashboard (Scorecard, Prior-Art & Pain Points, Stack Explained & Memory, Mermaid Diagrams, ADR Ledger). |
+| **`.preflight/SPEC.md`** | Clean, git-ready system design specification. |
+| **`.preflight/STACK.md`** | **"Stack Explained"** table (`Now` vs. `Later`, config-file proof, alternatives) + Memory & Agent Communication architecture. |
+| **`.preflight/issues/01-*.md`** | Individual, dependency-ordered vertical-slice tickets (`01`, `02`, `03`...) ready to build sequentially one-by-one. |
+| **`docs/adr/NNNN-*.md`** | Permanent Architecture Decision Records with rejected alternatives. |
+| **`GLOSSARY.md`** | Ubiquitous domain language maintained throughout the interview. |
+
+---
+
+## 📖 Real Case Study (`examples/edge-cron-scheduler/`)
+
+See how PreFlight turned a fragile *"distributed edge cron over embedded etcd"* pitch into an autonomous **SQLite WAL + Linux `cgroups v2`** architecture after mining real issues like `dagu-org/dagu#412`:
+
+- 📄 **[Read the Case Study Transcript](./examples/edge-cron-scheduler/CASE_STUDY.md)**
+- 📋 **[View the Exported `SPEC.md`](./examples/edge-cron-scheduler/SPEC.md)** & **[`STACK.md`](./examples/edge-cron-scheduler/STACK.md)**
+- 🎟️ **[Browse the Generated Ordered Tickets (`issues/INDEX.md`)](./examples/edge-cron-scheduler/issues/INDEX.md)**
+- 🖥️ **[Open `blueprint_report.html`](./examples/edge-cron-scheduler/blueprint_report.html)**
+
+---
+
+## 🛠️ CLI Reference
+
+<details>
+<summary><strong>Click to expand full CLI commands (<code>state.py</code>, <code>scout.py</code>, <code>render_blueprint.py</code>)</strong></summary>
+
+<br/>
 
 ```bash
-# 1. Initialize project state
-python3 skills/preflight/scripts/state.py --workspace . init \
+# 1. Initialize (or pass --reset to wipe any previous run cleanly)
+python3 skills/preflight/scripts/state.py --workspace . init --reset \
   --name "EdgeCron" \
   --summary "Autonomous Linux edge DAG scheduler with cgroup v2 step isolation" \
   --runtime "Go 1.23 (Linux)" \
   --stack "Go,SQLite3 WAL,Linux cgroups v2"
 
-# 2. Run the GitHub Deep-Scout & Pain-Point Miner
+# 2. Scout GitHub Competitors (-q), OSS Building Blocks (-t), and Repo Config Files
 python3 skills/preflight/scripts/scout.py --workspace . \
   -q "dag scheduler single binary" \
-  -q "cron alternative web ui go"
+  -t "golang sqlite wal library"
 
-# 3. Update a dimension score (enforces >=40 char summary & >=2 edge cases for 20/20)
+# 3. Add "Stack Explained" entries (What job it does, why needed, alternative, NOW vs LATER, config proof)
+python3 skills/preflight/scripts/state.py --workspace . add-tool \
+  --category container-runtime \
+  --recommended "Docker (Multi-stage build)" \
+  --stage now \
+  --config-proof "Dockerfile" \
+  --purpose "Reproducible static binary build & local integration test harness" \
+  --why "Guarantees identical Linux kernel headers and SQLite build flags across dev and CI" \
+  --alternatives "Host-native go build (drifts across macOS/Linux developer machines)"
+
+# 4. Configure Memory & Agent/Component Communication Architecture
+python3 skills/preflight/scripts/state.py --workspace . set-memory-arch \
+  --strategy transactional-db \
+  --communication "Single-writer Go channel batching step heartbeats into SQLite WAL" \
+  --workflow " Append-only run state transitions flushed every 100ms" \
+  --rationale "Deterministic state recovery on power loss without external DB or Vector overhead" \
+  --alternatives "etcd Raft (loses quorum on 2-node WAN splits); Redis (volatile on power loss)" \
+  --failure-mode "SQLITE_BUSY under 50+ concurrent step heartbeats -> Mitigated by single writer goroutine"
+
+# 5. Score Dimensions, Record ADRs & Red-Team Critiques
 python3 skills/preflight/scripts/state.py --workspace . update-dimension \
   --dimension differentiation --score 20 \
   --summary "Unlike dagu-org/dagu (#412 orphan subprocess leaks), EdgeCron isolates every step in a Linux cgroup v2 scope." \
   --edge-case "Solves dagu-org/dagu#412 by writing 1 to cgroup.kill on step timeout" \
   --edge-case "Autonomous per-node SQLite WAL avoids etcd quorum loss during WAN cuts"
 
-# 4. Record ADRs and Red-Team Critiques
 python3 skills/preflight/scripts/state.py --workspace . add-decision \
   --title "Linux cgroups v2 Per-Step Isolation" \
-  --decision "Spawn each DAG step inside a dedicated cgroup v2 scope with memory.max and cgroup.kill teardown." \
+  --decision "Spawn each DAG step inside a dedicated cgroup v2 scope with cgroup.kill teardown." \
   --rejected "Standard Go os/exec Process.Kill()" \
-  --rationale "Guarantees zero orphaned grandchild processes (dagu-org/dagu#412)." \
+  --rationale "Prevents orphaned grandchild processes (dagu-org/dagu#412)." \
   --dimension bottlenecks
 
 python3 skills/preflight/scripts/state.py --workspace . add-critique \
   --title "Post-Outage Cron Stampede on Reboot" \
   --severity high \
-  --attack "After a 4-hour power outage, firing 240 missed 1-minute jobs simultaneously exhausts 1GB edge RAM." \
+  --attack "Firing 240 missed 1-minute jobs simultaneously after a 4-hour outage exhausts 1GB RAM." \
   --mitigation "Enforce per-DAG catchup_policy (skip | latest_only | backfill_serial)."
 
-# 5. Set Mermaid diagrams, trade-offs, and implementation plan
+# 6. Set Diagrams & Render Blueprint + SPEC.md + STACK.md + Ordered Tickets (.preflight/issues/)
 python3 skills/preflight/scripts/state.py --workspace . set-design \
   --topology "flowchart LR\n    CLI --> Daemon --> SQLite[(SQLite WAL)]" \
   --sequence "sequenceDiagram\n    CLI->>Daemon: Trigger DAG\n    Daemon->>SQLite: Commit state" \
@@ -144,53 +189,35 @@ python3 skills/preflight/scripts/state.py --workspace . set-design \
   --step "Implement SQLite WAL state machine and single-writer batch loop" \
   --step "Implement Linux cgroup v2 scope runner with cgroup.kill teardown"
 
-# 6. Render blueprint_report.html and .preflight/SPEC.md
-python3 skills/preflight/scripts/render_blueprint.py --workspace . \
-  --output blueprint_report.html \
-  --spec-output .preflight/SPEC.md
+python3 skills/preflight/scripts/render_blueprint.py --workspace .
 ```
+
+</details>
 
 ---
 
-## Repository Structure
+## 📂 Repository Layout
 
 ```text
-.
-├── .claude-plugin/
-│   └── plugin.json                            # Plugin manifest for 1-command skill installers
-├── .github/workflows/
-│   └── ci.yml                                 # GitHub Actions CI across Python 3.10, 3.11, 3.12
-├── AGENTS.md                                  # Repository engineering rules
-├── GLOSSARY.md                                # Ubiquitous domain language for PreFlight
-├── LICENSE                                    # MIT License
-├── README.md                                  # Documentation
-├── docs/adr/                                  # Architecture Decision Records
-│   ├── 0001-host-orchestrated-agent-skill.md
-│   └── 0002-hybrid-repo-native-and-sqlite-state.md
-├── examples/edge-cron-scheduler/              # End-to-end before/after case study & artifacts
-│   ├── CASE_STUDY.md
-│   ├── SPEC.md
-│   └── blueprint_report.html
+preflight/
 ├── skills/preflight/
-│   ├── SKILL.md                               # Main Agent Skill instructions
+│   ├── SKILL.md                     # Self-contained Agent Skill instructions
 │   └── scripts/
-│       ├── state.py                           # Evidence-Gated Working State & ADR Ledger CLI
-│       ├── scout.py                           # GitHub Deep-Scout & Issue/Comment Miner
-│       └── render_blueprint.py                # HTML Blueprint & SPEC.md renderer
-└── tests/
-    └── test_preflight.py                      # Automated unit & integration test suite
+│       ├── state.py                 # Readiness Gate, Stack Explained, Memory Advisor & Ticket Exporter
+│       ├── scout.py                 # GitHub Deep-Scout, Config Inspector & Issue/Comment Miner
+│       └── render_blueprint.py      # 5-tab HTML Blueprint, SPEC.md, STACK.md & Ticket compiler
+├── examples/edge-cron-scheduler/    # Complete before/after architectural pivot case study
+├── docs/adr/                        # Architecture Decision Records (0001–0003)
+├── tests/test_preflight.py          # Zero-dependency unit & integration test suite
+└── GLOSSARY.md                      # Domain vocabulary
 ```
 
----
-
-## Running Tests
+## 🧪 Testing
 
 ```bash
 python3 -m unittest discover -s tests -v
 ```
 
----
-
-## License
+## 📄 License
 
 Released under the [MIT License](./LICENSE).

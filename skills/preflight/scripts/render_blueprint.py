@@ -3,9 +3,10 @@
 PreFlight Blueprint & Specification Generator (`scripts/render_blueprint.py`).
 
 Reads:
-- `.preflight/state.json` (Working State, 5-dimension Readiness Scorecard, Red-Team Critiques, System Design)
+- `.preflight/state.json` (Working State, 5-dimension Readiness Scorecard, Tooling & Maintenance Matrix,
+  Memory & Agent Communication Architecture, Red-Team Critiques, System Design)
 - `.preflight/decisions.json` (Decision Ledger / ADRs)
-- `.preflight/prior-art.json` (Active Incumbents, Graveyard/Dormant Repos, Verified Pain Points + Top Comments)
+- `.preflight/prior-art.json` (Active Incumbents, Graveyard/Dormant Repos, OSS Building Blocks, Verified Pain Points)
 
 Enforces:
 1. Evidence-based Readiness Gate (`evaluate_gate`: score >= 80%, no 0% dimensions, `prior-art.json` present,
@@ -14,9 +15,10 @@ Enforces:
    placeholder diagrams are never shipped behind a "PASSED" badge).
 
 Outputs:
-- `blueprint_report.html`: Dark-mode interactive HTML dashboard with Mermaid.js diagrams, offline raw source
-  fallback, and a 1-click "Copy Spec Markdown" button.
+- `blueprint_report.html`: Dark-mode interactive HTML dashboard with Mermaid.js diagrams, Tooling & Stack
+  recommendations, Memory & Agent Communication breakdown, offline raw source fallback, and 1-click "Copy Spec Markdown".
 - `.preflight/SPEC.md` (or `--spec-output`): Clean Markdown specification document ready for implementation.
+- `.preflight/STACK.md`: Dedicated Tooling, OSS Building Blocks, Project Maintenance & Memory Architecture doc.
 """
 
 from __future__ import annotations
@@ -28,7 +30,18 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from state import DIMENSIONS, DIMENSION_LABELS, evaluate_gate, load_decisions, load_state
+from state import (
+    DIMENSIONS,
+    DIMENSION_LABELS,
+    build_stack_markdown,
+    evaluate_gate,
+    export_tickets_to_dir,
+    format_stack_explained_table,
+    load_decisions,
+    load_prior_art as load_prior_art_optional,
+    load_state,
+    strip_step_prefix,
+)
 
 
 def esc(val: Any) -> str:
@@ -36,10 +49,17 @@ def esc(val: Any) -> str:
 
 
 def load_prior_art(workspace: Path) -> dict[str, Any]:
-    path = workspace / ".preflight" / "prior-art.json"
-    if not path.exists():
-        return {"active_incumbents": [], "graveyard_repos": [], "pain_points": [], "queries": []}
-    return json.loads(path.read_text(encoding="utf-8"))
+    data = load_prior_art_optional(workspace)
+    if not data:
+        return {
+            "active_incumbents": [],
+            "graveyard_repos": [],
+            "oss_building_blocks": [],
+            "observed_stack_configs": [],
+            "pain_points": [],
+            "queries": [],
+        }
+    return data
 
 
 def build_spec_markdown(
@@ -83,7 +103,63 @@ def build_spec_markdown(
                 lines.append(f"- {ec}")
         lines.append("")
 
-    lines.append("## 3. Adversarial Red-Team Critiques & Mitigations")
+    # Memory & Agent Communication Section
+    mem = state.get("memory_architecture") or {}
+    if mem.get("strategy") or mem.get("agent_communication_pattern") or mem.get("failure_modes"):
+        lines.extend(
+            [
+                "### Memory, State & Agent Communication Workflow",
+                "",
+                f"- **Selected Memory Strategy:** `{mem.get('strategy') or 'Unspecified'}`",
+                f"- **Agent / Component Communication Pattern:** {mem.get('agent_communication_pattern') or '—'}",
+                f"- **Workflow Memory Lifecycle:** {mem.get('workflow_memory_flow') or '—'}",
+                f"- **Why Chosen (vs. RAG / Vector DB / Alternatives):** {mem.get('rationale') or '—'}",
+                f"- **Alternatives Considered:** {mem.get('alternatives_considered') or '—'}",
+                "",
+            ]
+        )
+        for fm in mem.get("failure_modes") or []:
+            lines.append(f"- ⚠️ **Memory Failure Mode & Mitigation:** {fm}")
+        lines.append("")
+
+    # Tooling, OSS Building Blocks & Project Maintenance Section ("Stack Explained")
+    sec_num = 3
+    tools = state.get("tooling_recommendations") or []
+    oss_blocks = prior_art.get("oss_building_blocks") or []
+    observed_configs = prior_art.get("observed_stack_configs") or []
+    if tools or oss_blocks or observed_configs:
+        lines.append(f"## {sec_num}. Stack Explained (Config-Verified Tooling, Alternatives & Now vs. Later)")
+        sec_num += 1
+        lines.append("")
+        if tools:
+            lines.extend(format_stack_explained_table(tools))
+            lines.append("")
+        if observed_configs:
+            lines.append("### Config Files Verified in Scouted Incumbent Repos")
+            lines.append("")
+            lines.append("| Category | Tool Proven | Config File Inspected | Observed In Repos |")
+            lines.append("| :--- | :--- | :--- | :--- |")
+            for oc in observed_configs:
+                repos_list = ", ".join(f"`{r}`" for r in oc.get("repos") or [])
+                lines.append(
+                    f"| `{oc.get('category', '—')}` | **{oc.get('tool', '—')}** | `{oc.get('config_file', '—')}` | {repos_list} |"
+                )
+            lines.append("")
+        if oss_blocks:
+            lines.append("### Scouted Open-Source Building Blocks (GitHub)")
+            lines.append("")
+            lines.append("| Repository | Stars | License | Language | Last Push | Description |")
+            lines.append("| :--- | :---: | :---: | :---: | :---: | :--- |")
+            for b in oss_blocks[:8]:
+                desc = (b.get("description") or "—").replace("|", "\\|")
+                lines.append(
+                    f"| [{b['full_name']}]({b['html_url']}) | ⭐ {b['stars']} | `{b.get('license', 'Unspecified')}` | "
+                    f"{b.get('language', '—')} | {b['inactive_days']}d ago | {desc} |"
+                )
+            lines.append("")
+
+    lines.append(f"## {sec_num}. Adversarial Red-Team Critiques & Mitigations")
+    sec_num += 1
     lines.append("")
     critiques = state.get("red_team_critiques") or []
     for c in critiques:
@@ -92,13 +168,14 @@ def build_spec_markdown(
         lines.append(f"- **Architectural Mitigation:** {c.get('mitigation')}")
         lines.append("")
 
-    lines.append("## 4. GitHub Prior-Art & Mined Pain Points")
+    lines.append(f"## {sec_num}. GitHub Prior-Art & Mined Pain Points")
+    sec_num += 1
     lines.append("")
     incumbents = prior_art.get("active_incumbents") or []
     graveyard = prior_art.get("graveyard_repos") or []
     if incumbents or graveyard:
         lines.append("| Repository | Stars | Velocity | Last Push | Status | Summary |")
-        lines.append("| :--- | :---: | :---: | :---: | :---: | :--- |")
+        lines.append("| :--- | :---: | :---: | :---: | :--- | :--- |")
         for r in incumbents[:8]:
             desc = (r.get("description") or "—").replace("|", "\\|")
             lines.append(
@@ -133,7 +210,7 @@ def build_spec_markdown(
 
     lines.extend(
         [
-            "## 5. System Architecture Diagrams",
+            f"## {sec_num}. System Architecture Diagrams",
             "",
             "### System Topology",
             "",
@@ -149,6 +226,7 @@ def build_spec_markdown(
             "",
         ]
     )
+    sec_num += 1
 
     options_matrix = sys_design.get("options_matrix") or []
     if options_matrix:
@@ -166,7 +244,8 @@ def build_spec_markdown(
             )
         lines.append("")
 
-    lines.append("## 6. Decision Ledger (ADRs)")
+    lines.append(f"## {sec_num}. Decision Ledger (ADRs)")
+    sec_num += 1
     lines.append("")
     for adr in decisions:
         lines.append(f"### {adr.get('id')}: {adr.get('title')}")
@@ -179,10 +258,10 @@ def build_spec_markdown(
 
     impl_steps = sys_design.get("implementation_steps") or []
     if impl_steps:
-        lines.append("## 7. Implementation Plan")
+        lines.append(f"## {sec_num}. Implementation Plan")
         lines.append("")
         for idx, step in enumerate(impl_steps, start=1):
-            clean_step = step.lstrip("0123456789. ").strip()
+            clean_step = strip_step_prefix(step)
             lines.append(f"{idx}. {clean_step}")
         lines.append("")
 
@@ -262,6 +341,7 @@ def build_html(
     # 3. Prior-Art Matrix & Pain-Point Mine
     incumbents = prior_art.get("active_incumbents") or []
     graveyard = prior_art.get("graveyard_repos") or []
+    oss_blocks = prior_art.get("oss_building_blocks") or []
     pain_points = prior_art.get("pain_points") or []
 
     inc_rows = []
@@ -329,6 +409,83 @@ def build_html(
             """
         )
     pain_points_html = "".join(pp_cards) or '<div class="card"><p class="muted">No verified open issue pain points mined.</p></div>'
+
+    # 3b. "Stack Explained" (Config-Verified Tooling, Now vs. Later) & Memory Architecture HTML
+    tools = state.get("tooling_recommendations") or []
+    observed_configs = prior_art.get("observed_stack_configs") or []
+    if tools:
+        tool_rows = []
+        for t in tools:
+            stage = (t.get("stage") or "now").lower()
+            stage_badge = (
+                '<span class="badge badge-green">NOW (Day 1)</span>'
+                if stage == "now"
+                else '<span class="badge badge-blue">LATER (Defer)</span>'
+            )
+            proof = esc(t.get("config_proof") or "—")
+            tool_rows.append(
+                f"""
+                <tr>
+                    <td>
+                        <span class="badge badge-green">{esc(t.get('recommended'))}</span>
+                        <div class="muted" style="font-size:0.78rem; margin-top:0.2rem">{esc(t.get('category', 'core-oss'))}</div>
+                    </td>
+                    <td>{stage_badge}</td>
+                    <td><strong>{esc(t.get('purpose'))}</strong></td>
+                    <td>{esc(t.get('why'))}</td>
+                    <td class="muted">{esc(t.get('alternatives'))}</td>
+                    <td><code>{proof}</code></td>
+                </tr>
+                """
+            )
+        tool_rows_html = "".join(tool_rows)
+    else:
+        tool_rows_html = '<tr><td colspan="6" class="muted">No explicit Stack Explained entries added via `state.py add-tool` yet.</td></tr>'
+
+    if observed_configs:
+        cfg_rows = "".join(
+            f"""
+            <tr>
+                <td><span class="badge badge-blue">{esc(oc.get('category'))}</span></td>
+                <td><strong>{esc(oc.get('tool'))}</strong></td>
+                <td><code>{esc(oc.get('config_file'))}</code></td>
+                <td>{esc(', '.join(oc.get('repos') or []))}</td>
+            </tr>
+            """
+            for oc in observed_configs
+        )
+    else:
+        cfg_rows = '<tr><td colspan="4" class="muted">No config-file stack signals recorded in `.preflight/prior-art.json` yet.</td></tr>'
+
+    if oss_blocks:
+        oss_rows = "".join(
+            f"""
+            <tr>
+                <td><a href="{esc(b.get('html_url'))}" target="_blank" rel="noopener">{esc(b.get('full_name'))}</a></td>
+                <td>⭐ {int(b.get('stars', 0)):,}</td>
+                <td><code>{esc(b.get('license', 'Unspecified'))}</code></td>
+                <td>{esc(b.get('language'))}</td>
+                <td>{int(b.get('inactive_days', 0))}d ago</td>
+                <td>{esc(b.get('description'))}</td>
+            </tr>
+            """
+            for b in oss_blocks
+        )
+    else:
+        oss_rows = '<tr><td colspan="6" class="muted">No open-source building blocks scouted via `scout.py -t` yet.</td></tr>'
+
+    mem = state.get("memory_architecture") or {}
+    mem_strategy = esc(mem.get("strategy") or "Not explicitly set (see Memory dimension)")
+    mem_comm = esc(mem.get("agent_communication_pattern") or "—")
+    mem_flow = esc(mem.get("workflow_memory_flow") or "—")
+    mem_rationale = esc(mem.get("rationale") or "—")
+    mem_alts = esc(mem.get("alternatives_considered") or "—")
+    mem_fms = mem.get("failure_modes") or []
+    mem_fm_html = (
+        "<ul class='edge-list'>" + "".join(f"<li>⚠️ {esc(fm)}</li>" for fm in mem_fms) + "</ul>"
+        if mem_fms
+        else '<p class="muted">See Memory dimension edge cases.</p>'
+    )
 
     # 4. System Design & Mermaid
     sys_design = state.get("system_design") or {}
@@ -587,8 +744,9 @@ def build_html(
   <div class="tabs">
     <button class="tab-btn active" onclick="showTab('tab-scorecard', this)">1. Readiness &amp; Red-Team</button>
     <button class="tab-btn" onclick="showTab('tab-prior-art', this)">2. Prior-Art &amp; Pain Points ({len(incumbents) + len(graveyard)})</button>
-    <button class="tab-btn" onclick="showTab('tab-design', this)">3. System Topology &amp; Sequence</button>
-    <button class="tab-btn" onclick="showTab('tab-ledger', this)">4. Decision Ledger ({len(decisions)}) &amp; Plan</button>
+    <button class="tab-btn" onclick="showTab('tab-tooling-memory', this)">3. Stack Explained &amp; Memory ({len(tools) + len(observed_configs)})</button>
+    <button class="tab-btn" onclick="showTab('tab-design', this)">4. System Topology &amp; Sequence</button>
+    <button class="tab-btn" onclick="showTab('tab-ledger', this)">5. Decision Ledger ({len(decisions)}) &amp; Plan</button>
   </div>
 
   <!-- TAB 1: SCORECARD & RED TEAM -->
@@ -628,7 +786,79 @@ def build_html(
     </div>
   </section>
 
-  <!-- TAB 3: SYSTEM DESIGN & MERMAID -->
+  <!-- TAB 3: STACK EXPLAINED, PROJECT MAINTENANCE & MEMORY ARCHITECTURE -->
+  <section id="tab-tooling-memory" class="tab-panel">
+    <h2 class="section-title">Stack Explained (What Job It Does, Why Needed, Alternative &amp; Now vs. Later)</h2>
+    <div class="card" style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>Tool</th>
+            <th>Now / Later</th>
+            <th>What Job It Does</th>
+            <th>Why This Project Needs It</th>
+            <th>What the Alternative Was</th>
+            <th>Config Proof</th>
+          </tr>
+        </thead>
+        <tbody>
+          {tool_rows_html}
+        </tbody>
+      </table>
+    </div>
+
+    <h2 class="section-title">Config Files Proven in Scouted Repos (pyproject.toml, Dockerfile, .github/workflows, .pre-commit-config.yaml)</h2>
+    <div class="card" style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>Category</th>
+            <th>Tool Proven</th>
+            <th>Config File Evidence</th>
+            <th>Observed In Scouted Repos</th>
+          </tr>
+        </thead>
+        <tbody>
+          {cfg_rows}
+        </tbody>
+      </table>
+    </div>
+
+    <h2 class="section-title">Memory, State &amp; Agent Communication Advisor</h2>
+    <div class="card">
+      <div class="dim-header">
+        <span class="dim-title">Selected Memory Strategy</span>
+        <span class="badge badge-green">{mem_strategy}</span>
+      </div>
+      <p><strong>Agent / Component Communication Pattern:</strong> {mem_comm}</p>
+      <p><strong>Workflow Memory Lifecycle:</strong> {mem_flow}</p>
+      <p><strong>Why This Memory Architecture (vs. RAG / Vector DB / Alternatives):</strong> {mem_rationale}</p>
+      <p class="rejected"><strong>Alternatives Considered:</strong> {mem_alts}</p>
+      <h4 style="margin-top:0.85rem">Anticipated Memory Failure Modes &amp; Mitigations</h4>
+      {mem_fm_html}
+    </div>
+
+    <h2 class="section-title">Scouted Open-Source Building Blocks (GitHub Libraries &amp; SDKs)</h2>
+    <div class="card" style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th>Repository</th>
+            <th>Stars</th>
+            <th>License</th>
+            <th>Language</th>
+            <th>Last Push</th>
+            <th>Summary</th>
+          </tr>
+        </thead>
+        <tbody>
+          {oss_rows}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- TAB 4: SYSTEM DESIGN & MERMAID -->
   <section id="tab-design" class="tab-panel">
     <h2 class="section-title">System Topology Diagram</h2>
     <div class="mermaid-box">
@@ -666,7 +896,7 @@ def build_html(
     </div>
   </section>
 
-  <!-- TAB 4: DECISION LEDGER & IMPLEMENTATION PLAN -->
+  <!-- TAB 5: DECISION LEDGER & IMPLEMENTATION PLAN -->
   <section id="tab-ledger" class="tab-panel">
     <h2 class="section-title">Decision Ledger (Locked ADRs &amp; Rejected Paths)</h2>
     {decisions_html}
@@ -703,7 +933,7 @@ def build_html(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Render PreFlight HTML Blueprint and SPEC.md")
+    parser = argparse.ArgumentParser(description="Render PreFlight HTML Blueprint, SPEC.md, and STACK.md")
     parser.add_argument("--workspace", default=".", help="Workspace root directory")
     parser.add_argument("--output", default="blueprint_report.html", help="Output HTML filename")
     parser.add_argument(
@@ -758,7 +988,16 @@ def main(argv: list[str] | None = None) -> int:
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text(spec_md + "\n", encoding="utf-8")
 
-    print(f"Blueprint rendered: {out_path} | Spec exported: {spec_path} (Readiness: {score}%)")
+    stack_path = workspace / ".preflight" / "STACK.md"
+    stack_path.parent.mkdir(parents=True, exist_ok=True)
+    stack_path.write_text(build_stack_markdown(state) + "\n", encoding="utf-8")
+
+    ticket_files = export_tickets_to_dir(workspace, state, decisions)
+
+    print(
+        f"Blueprint rendered: {out_path} | Spec exported: {spec_path} | Stack exported: {stack_path} | "
+        f"Tickets exported: {len(ticket_files)} in .preflight/issues/ (Readiness: {score}%)"
+    )
     return 0
 
 

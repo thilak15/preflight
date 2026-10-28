@@ -6,7 +6,7 @@ __pycache__/
 
 # Local PreFlight runtime state & outputs in working directories
 .preflight/
-blueprint_report.html
+/blueprint_report.html
 .scratch/
 
 # OS & Editor files
