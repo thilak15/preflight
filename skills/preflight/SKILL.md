@@ -30,7 +30,7 @@ PreFlight runs **before** code is written. Instead of acting as a "yes-man", you
 Resolve `PREFLIGHT_SCRIPTS` to the `scripts/` folder adjacent to this `SKILL.md` file (for example `.agents/skills/preflight/scripts`, `skills/preflight/scripts`, or `~/.gemini/config/skills/preflight/scripts`):
 
 ```bash
-for d in "./skills/preflight/scripts" "./.agents/skills/preflight/scripts" "$HOME/.gemini/config/skills/preflight/scripts" "$HOME/.claude/skills/preflight/scripts"; do
+for d in "./skills/preflight/scripts" "./.agents/skills/preflight/scripts" "$HOME/.claude/skills/preflight/scripts" "$HOME/.agents/skills/preflight/scripts" "$HOME/.gemini/config/skills/preflight/scripts"; do
   [ -d "$d" ] && PREFLIGHT_SCRIPTS="$d" && break
 done
 ```
