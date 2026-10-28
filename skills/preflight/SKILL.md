@@ -116,8 +116,8 @@ As soon as the core problem is clear (after Round 1, or immediately if the user 
      -t "<oss building block query 1>" \
      -t "<oss building block query 2>"
    ```
-   `scout.py` authenticates via `gh auth token` $\to$ `GITHUB_TOKEN` $\to$ unauthenticated fallback, caches responses in `.preflight/cache.db` (SQLite3, 7-day TTL), writes `.preflight/prior-art.json` (including `search_limits` metadata), and outputs:
-   - **Active Incumbents** (pushed within 365 days, with verified root config files and approximate lifetime star velocity)
+   `scout.py` authenticates via `gh auth token` $\to$ `GITHUB_TOKEN` $\to$ unauthenticated fallback, caches responses in `.preflight/cache.db` (SQLite3, 7-day TTL), writes `.preflight/prior-art.json` (tracking Search API and Core API quotas separately alongside `search_limits` and multi-page pagination depth), and outputs:
+   - **Active Incumbents** (pushed within 365 days, with verified root config files and approximate lifetime star velocity across paginated search pages)
    - **Graveyard / Dormant Repos** (heuristic: archived by maintainer or $>365\text{d}$ without pushes — treat $>365\text{d}$ inactivity as a maintenance signal only; never claim a repo stalled due to a single design choice without issue/commit evidence)
    - **Scouted OSS Building Blocks** (actively maintained open-source libraries/tools with SPDX license & star counts)
    - **Verified Pain Points** (Pass A: top `+1` open issues; Pass B: `label:bug` open issues; includes `top_comments` from issue threads)
@@ -137,7 +137,7 @@ Produce one concise entry per tool answering four exact questions:
 3. **What the alternative was** (`--alternatives`)
 4. **Whether it is `now` or `later`** (`--stage now|later`) + the config file (`--config-proof`)
 
-`state.py add-tool` automatically checks `--config-proof` against `.preflight/prior-art.json` (`observed_stack_configs`) and existing workspace files, labeling each entry in `STACK.md` and `blueprint_report.html` as either **`✅ Verified`** (backed by `scout.py` or workspace files) or **`⚠️ Claimed / Unverified`** (recommended for the target architecture, not yet present on disk).
+`state.py add-tool` validates `--config-proof` using tool-to-config signature pairing against `.preflight/prior-art.json` (`observed_stack_configs`) and existing workspace files. It verifies that the config file (e.g. `Dockerfile`, `go.sum`, `uv.lock`) genuinely associates with the recommended tool or that the tool appears in project manifests (`pyproject.toml`, `requirements.txt`, `package.json`, `docker-compose.yml`, `Makefile`). Each entry is labeled in `STACK.md` and `blueprint_report.html` as either **`✅ Verified`** (backed by matching tool-to-config evidence from `scout.py` or workspace files) or **`⚠️ Claimed / Unverified`** (recommended for the target architecture, not yet empirically proven or present on disk).
 
 ```bash
 python3 "$PREFLIGHT_SCRIPTS/state.py" --workspace . add-tool \
@@ -159,7 +159,7 @@ Evaluate how agents or components should communicate and what memory architectur
 - `hybrid-search`: Combined lexical (`BM25`/`FTS5`) + vector embeddings with Reciprocal Rank Fusion.
 - `episodic-agent-state`: Multi-step agent workflow using structured handoff checkpoints + compacted episodic state to prevent context rot.
 
-Record the memory architecture and at least 1 specific memory failure mode (required before scoring `memory` `20/20`):
+Record the memory architecture. For stateful systems, at least 1 specific memory failure mode is required before scoring `memory` `20/20` or unlocking the gate. For **stateless** systems (CLI tools, deterministic transforms, single-process scripts), pass `--strategy stateless` with a substantive `--rationale` ($\ge 15$ characters) explaining why persistent memory and agent communication do not apply; this explicitly exempts the project from `--failure-mode` and sets a default stateless communication pattern to avoid artificial gate theater:
 ```bash
 python3 "$PREFLIGHT_SCRIPTS/state.py" --workspace . set-memory-arch \
   --strategy <stateless|transactional-db|lexical-fts|rag-vector-db|hybrid-search|episodic-agent-state> \

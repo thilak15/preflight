@@ -408,11 +408,57 @@ def save_decisions(workspace: Path, decisions: list[dict[str, Any]]) -> Path:
     return WorkspaceStore(workspace).save_decisions(decisions)
 
 
+# Specific associations between known project maintenance/build tools and their canonical config signatures
+KNOWN_TOOL_CONFIG_ASSOCIATIONS: dict[str, set[str]] = {
+    "uv": {"uv.lock", "pyproject.toml"},
+    "poetry": {"poetry.lock", "pyproject.toml"},
+    "pip": {"requirements.txt", "requirements.in", "setup.py", "pyproject.toml"},
+    "pip-tools": {"requirements.txt", "requirements.in"},
+    "docker": {"dockerfile", "containerfile", "docker-compose.yml", "docker-compose.yaml", ".dockerignore"},
+    "compose": {"docker-compose.yml", "docker-compose.yaml"},
+    "kubernetes": {"k8s", "chart.yaml", "deployment.yaml", "helm"},
+    "k8s": {"k8s", "chart.yaml", "deployment.yaml", "helm"},
+    "helm": {"chart.yaml", "helm"},
+    "github actions": {".github/workflows", "workflows"},
+    "pre-commit": {".pre-commit-config.yaml"},
+    "ruff": {"ruff.toml", ".ruff.toml", "pyproject.toml"},
+    "mypy": {"mypy.ini", ".mypy.ini", "pyproject.toml", "setup.cfg"},
+    "pytest": {"pytest.ini", "pyproject.toml", "setup.cfg"},
+    "pnpm": {"pnpm-lock.yaml", "package.json"},
+    "npm": {"package-lock.json", "package.json"},
+    "yarn": {"yarn.lock", "package.json"},
+    "cargo": {"cargo.lock", "cargo.toml"},
+    "rust": {"cargo.lock", "cargo.toml"},
+    "go": {"go.sum", "go.mod"},
+    "make": {"makefile"},
+}
+
+
+def _tool_matches_config_signature(recommended: str, config_name: str) -> bool:
+    rec_lower = recommended.lower()
+    cfg_base = Path(config_name).name.lower()
+    cfg_path = config_name.lower().replace("\\", "/")
+
+    # Check known tool associations
+    for tool_key, allowed_cfgs in KNOWN_TOOL_CONFIG_ASSOCIATIONS.items():
+        if tool_key in rec_lower:
+            for ac in allowed_cfgs:
+                if ac in (cfg_base, cfg_path) or cfg_path.endswith(ac):
+                    return True
+            return False
+
+    rec_tokens = [tok for tok in re.findall(r"[a-z0-9]+", rec_lower) if len(tok) >= 3]
+    return any(tok in cfg_base for tok in rec_tokens)
+
+
 def verify_config_proof(workspace: Path, config_proof: str, recommended: str = "") -> tuple[str, str]:
     """
     Check whether a tool's `config_proof` is backed by empirical evidence in either:
     1. `.preflight/prior-art.json` (`observed_stack_configs` or `detected_configs`), or
     2. An existing file/directory in `workspace`.
+    Requires that the cited config file actually corresponds to the recommended tool
+    (tool-to-config pairing), preventing unrelated files (e.g. a generic `Dockerfile`)
+    from verifying an arbitrary tool (e.g. `Redis`).
     Returns `(proof_status, proof_source)` where `proof_status` is `"verified"` or `"claimed-unverified"`.
     """
     raw = config_proof.strip()
@@ -428,11 +474,25 @@ def verify_config_proof(workspace: Path, config_proof: str, recommended: str = "
         if "." in cleaned or "/" in cleaned or cleaned in ("Dockerfile", "Containerfile", "Makefile", "justfile", "k8s", "helm"):
             candidates.append(cleaned.rstrip("/"))
 
+    rec_lower = recommended.lower()
+
     # 1. Check workspace files
     for cand in candidates:
         cand_path = (workspace / cand).resolve()
         if cand_path.exists() and cand_path.is_relative_to(workspace.resolve()):
-            return "verified", f"workspace:{cand}"
+            # If candidate directly matches known tool association signature:
+            if _tool_matches_config_signature(recommended, cand):
+                return "verified", f"workspace:{cand}"
+            # For general multi-tool manifests (pyproject.toml, requirements.txt, docker-compose.yml, package.json):
+            # Inspect the file content on disk to check if the tool is actually configured/referenced
+            if cand_path.is_file() and cand in ("pyproject.toml", "requirements.txt", "requirements.in", "docker-compose.yml", "docker-compose.yaml", "package.json", "Makefile"):
+                try:
+                    file_text = cand_path.read_text(encoding="utf-8", errors="ignore")[:32768].lower()
+                    rec_tokens = [tok for tok in re.findall(r"[a-z0-9_-]+", rec_lower) if len(tok) >= 3]
+                    if any(tok in file_text for tok in rec_tokens):
+                        return "verified", f"workspace:{cand}"
+                except Exception:
+                    pass
 
     # 2. Check .preflight/prior-art.json observed_stack_configs & incumbent detected_configs
     prior_art = load_prior_art(workspace)
@@ -441,18 +501,27 @@ def verify_config_proof(workspace: Path, config_proof: str, recommended: str = "
         for inc in prior_art.get("active_incumbents") or []:
             observed.extend(inc.get("detected_configs") or [])
         raw_lower = raw.lower()
-        rec_lower = recommended.lower()
         for oc in observed:
             oc_cfg = str(oc.get("config_file") or "").lower()
             oc_tool = str(oc.get("tool") or "").lower()
+
+            # Ensure tool pairing: recommended tool must match observed tool
+            rec_matches_tool = (
+                (oc_tool and (oc_tool in rec_lower or rec_lower in oc_tool))
+                or _tool_matches_config_signature(recommended, oc_cfg)
+            )
+            if not rec_matches_tool:
+                continue
+
+            # Check config match
             if oc_cfg and (oc_cfg in raw_lower or raw_lower in oc_cfg):
                 return "verified", f"scout:{oc.get('config_file')}"
             for cand in candidates:
-                if cand.lower() and cand.lower() in oc_cfg:
+                cand_base = Path(cand).name.lower()
+                if cand_base and (cand_base == oc_cfg or cand_base in oc_cfg or oc_cfg in cand_base):
                     return "verified", f"scout:{oc.get('config_file')}"
-            # Tool-name fallback only applies when the proof names no concrete file; an explicit
-            # filename that was never observed must stay unverified.
-            if not candidates and oc_tool and rec_lower and (oc_tool in rec_lower or rec_lower in oc_tool):
+            # Tool-name fallback only applies when the proof names no concrete file
+            if not candidates and rec_matches_tool:
                 return "verified", f"scout:{oc.get('config_file')}"
 
     return "claimed-unverified", "unverified-claim"
@@ -466,7 +535,7 @@ def cites_repo(text: str, full_name: str) -> bool:
     return re.search(pattern, text) is not None
 
 
-def evaluate_gate(state: dict[str, Any], workspace: Path | None = None) -> tuple[int, bool, list[str]]:
+def evaluate_gate(state: dict[str, Any], workspace: Path | None = None) -> GateVerdict:
     dims = state.get("dimensions", {})
     scores = [int(dims.get(d, {}).get("score", 0)) for d in DIMENSIONS]
     total = max(0, min(100, sum(scores)))
@@ -480,12 +549,52 @@ def evaluate_gate(state: dict[str, Any], workspace: Path | None = None) -> tuple
         missing.append(f"Untouched (0%) dimensions: {', '.join(zero_dims)}")
 
     mem = state.get("memory_architecture") or {}
-    if not (mem.get("strategy") or "").strip():
+    strat = (mem.get("strategy") or "").strip().lower()
+    if not strat:
         missing.append("Memory strategy (`set-memory-arch --strategy ...`) is required")
-    if not (mem.get("agent_communication_pattern") or "").strip():
-        missing.append("Agent/component communication pattern (`set-memory-arch --communication ...`) is required")
-    if not (mem.get("failure_modes") or []):
-        missing.append("At least 1 Memory Failure Mode (`set-memory-arch --failure-mode ...`) is required")
+    elif strat == "stateless":
+        rat = (mem.get("rationale") or "").strip()
+        if len(rat) < 15:
+            missing.append(
+                "Stateless architecture requires an explicit rationale (`--rationale`, >= 15 chars) "
+                "explaining why persistent memory and agent communication do not apply"
+            )
+    else:
+        if not (mem.get("agent_communication_pattern") or "").strip():
+            missing.append("Agent/component communication pattern (`set-memory-arch --communication ...`) is required")
+        if not (mem.get("failure_modes") or []):
+            missing.append("At least 1 Memory Failure Mode (`set-memory-arch --failure-mode ...`) is required")
+
+    if not (state.get("tooling_recommendations") or []):
+        missing.append("At least 1 Stack Explained tool entry (`add-tool`) is required")
+
+    if not (state.get("red_team_critiques") or []):
+        missing.append("At least 1 Red-Team Critique (`add-critique`) is required")
+
+    sys_design = state.get("system_design") or {}
+    if not (sys_design.get("topology_mermaid") or "").strip() or not (sys_design.get("sequence_mermaid") or "").strip():
+        missing.append(
+            "Both `topology_mermaid` and `sequence_mermaid` must be populated (`set-design --topology ... --sequence ...`)"
+        )
+
+    if workspace is not None:
+        prior_art = load_prior_art(workspace)
+        has_repos = bool(
+            prior_art
+            and ((prior_art.get("active_incumbents") or []) or (prior_art.get("graveyard_repos") or []))
+        )
+        if not has_repos:
+            missing.append("Prior-Art Scout (`scout.py`) has not been run (.preflight/prior-art.json missing or empty)")
+
+        decisions = load_decisions(workspace)
+        if not decisions:
+            missing.append("At least 1 Architecture Decision Record (`add-decision`) is required")
+
+    unlocked = len(missing) == 0
+    state["readiness_score"] = total
+    state["readiness_unlocked"] = unlocked
+    state["missing_gate_requirements"] = missing
+    return GateVerdict(score=total, unlocked=unlocked, missing=missing, is_draft=not unlocked)
 
     if not (state.get("tooling_recommendations") or []):
         missing.append("At least 1 Stack Explained tool entry (`add-tool`) is required")
@@ -685,21 +794,29 @@ def validate_dimension_evidence(
     if dimension == "memory" and score == 20:
         cur_state = state if state is not None else load_state(workspace)
         mem = cur_state.get("memory_architecture") or {}
-        if not (mem.get("strategy") or "").strip():
+        strat = (mem.get("strategy") or "").strip().lower()
+        if not strat:
             return (
-                "Rejected: score 20/20 on 'memory' requires `set-memory-arch` to be configured first "
-                "(strategy, communication pattern, and >= 1 failure mode)."
+                "Rejected: score 20/20 on 'memory' requires `set-memory-arch` to be configured first."
             )
-        if not (mem.get("agent_communication_pattern") or "").strip():
-            return (
-                "Rejected: score 20/20 on 'memory' requires a non-empty agent/component communication pattern "
-                "(`set-memory-arch --communication ...`)."
-            )
-        if not (mem.get("failure_modes") or []):
-            return (
-                "Rejected: score 20/20 on 'memory' requires at least 1 memory failure mode "
-                "(`set-memory-arch --failure-mode ...`)."
-            )
+        if strat == "stateless":
+            rat = (mem.get("rationale") or "").strip()
+            if len(rat) < 15:
+                return (
+                    "Rejected: score 20/20 on 'memory' with `strategy: stateless` requires an explicit rationale "
+                    "(`set-memory-arch --rationale ...`, >= 15 chars) explaining why persistent memory and agent communication do not apply."
+                )
+        else:
+            if not (mem.get("agent_communication_pattern") or "").strip():
+                return (
+                    "Rejected: score 20/20 on 'memory' requires a non-empty agent/component communication pattern "
+                    "(`set-memory-arch --communication ...`)."
+                )
+            if not (mem.get("failure_modes") or []):
+                return (
+                    "Rejected: score 20/20 on 'memory' requires at least 1 memory failure mode "
+                    "(`set-memory-arch --failure-mode ...`)."
+                )
 
     if dimension == "differentiation" and score > 0:
         prior_art = load_prior_art(workspace)
@@ -798,6 +915,9 @@ def _tokenize_keywords(text: str) -> set[str]:
     stop = {
         "the", "and", "for", "with", "from", "into", "that", "this", "over", "under", "step",
         "implement", "build", "add", "create", "use", "using", "via", "per", "all", "only",
+        "database", "sqlite", "python", "file", "system", "data", "code", "model", "test",
+        "state", "step", "slice", "task", "tool", "work", "spec", "run", "runtime", "project",
+        "architecture", "component", "will", "when", "then", "have", "each", "both", "must",
     }
     return {
         tok
@@ -817,6 +937,7 @@ def build_ticket_acceptance_criteria(
     """
     Generate concrete, ticket-specific acceptance criteria derived from the ticket's deliverable,
     matching ADRs, matching red-team critiques, and matching Day-1 tools.
+    Never blindly attaches fallback ADRs or critiques to unrelated vertical slices.
     """
     criteria: list[str] = []
     step_tokens = _tokenize_keywords(f"{title} {what_to_build}")
@@ -833,39 +954,42 @@ def build_ticket_acceptance_criteria(
     else:
         criteria.append(f"- [ ] Vertical slice implemented and verified: **{what_to_build.strip(' .')}**.")
 
-    # 2. Match specific ADRs by keyword overlap (or fall back to the most relevant ADR)
-    matched_adrs = [
-        a for a in decisions
-        if len(step_tokens & _tokenize_keywords(f"{a.get('title', '')} {a.get('decision', '')} {a.get('dimension', '')}")) >= 1
-    ]
-    if not matched_adrs and decisions:
-        matched_adrs = [decisions[0]]
-    for a in matched_adrs[:2]:
+    # 2. Match specific ADRs by substantive keyword overlap (>= 2 tokens or distinctive token >= 6 chars)
+    # Never blindly fall back to decisions[0] when no substantive match exists.
+    matched_adrs: list[tuple[int, dict[str, Any]]] = []
+    for a in decisions:
+        adr_tokens = _tokenize_keywords(f"{a.get('title', '')} {a.get('decision', '')} {a.get('dimension', '')}")
+        overlap = step_tokens & adr_tokens
+        if len(overlap) >= 2 or any(len(tok) >= 6 for tok in overlap):
+            matched_adrs.append((len(overlap), a))
+    matched_adrs.sort(key=lambda pair: pair[0], reverse=True)
+    for _, a in matched_adrs[:2]:
         criteria.append(
             f"- [ ] Enforces **{a['id']} ({a['title']})**: {a['decision'].strip(' .')}."
         )
 
-    # 3. Match specific Red-Team Critiques / failure modes by keyword overlap
-    matched_crits = [
-        c for c in critiques
-        if len(step_tokens & _tokenize_keywords(f"{c.get('title', '')} {c.get('attack', '')} {c.get('mitigation', '')}")) >= 1
-    ]
-    for c in matched_crits[:2]:
+    # 3. Match specific Red-Team Critiques by substantive keyword overlap
+    # Never blindly fall back to critiques[0] when no substantive match exists.
+    matched_crits: list[tuple[int, dict[str, Any]]] = []
+    for c in critiques:
+        crit_tokens = _tokenize_keywords(f"{c.get('title', '')} {c.get('attack', '')} {c.get('mitigation', '')}")
+        overlap = step_tokens & crit_tokens
+        if len(overlap) >= 2 or any(len(tok) >= 6 for tok in overlap):
+            matched_crits.append((len(overlap), c))
+    matched_crits.sort(key=lambda pair: pair[0], reverse=True)
+    for _, c in matched_crits[:2]:
         criteria.append(
             f"- [ ] Stress-tested against **[{c.get('severity', 'high').upper()}] {c.get('title')}**: {c.get('mitigation').strip(' .')}."
         )
 
-    # 4. If no critique matched directly, check memory failure modes or Day-1 tools matching this slice
-    if not matched_crits:
-        mem_fms = mem.get("failure_modes") or []
-        matched_fms = [fm for fm in mem_fms if len(step_tokens & _tokenize_keywords(fm)) >= 1]
-        if matched_fms:
-            criteria.append(f"- [ ] Verifies memory failure guard: {matched_fms[0].strip(' .')}.")
-        elif critiques:
-            c0 = critiques[0]
-            criteria.append(
-                f"- [ ] Includes regression test for **{c0.get('title')}** ({c0.get('mitigation').strip(' .')})."
-            )
+    # 4. If memory failure modes relate to this slice, include matching guards
+    mem_fms = mem.get("failure_modes") or []
+    for fm in mem_fms:
+        fm_tokens = _tokenize_keywords(fm)
+        overlap = step_tokens & fm_tokens
+        if len(overlap) >= 2 or any(len(tok) >= 6 for tok in overlap):
+            criteria.append(f"- [ ] Verifies memory failure guard: {fm.strip(' .')}.")
+            break
 
     matched_tools = [
         t for t in now_tools
@@ -952,11 +1076,20 @@ def export_tickets_to_dir(
             parts = [p.strip() for p in clean_step.split("::")]
             title = parts[0]
             what_to_build = parts[1] if len(parts) > 1 and parts[1] else parts[0]
-            blocked_by = parts[2] if len(parts) > 2 and parts[2] else prev_ticket_ref
+            raw_blocked = parts[2] if len(parts) > 2 and parts[2] else ""
+            if raw_blocked.lower() in ("none", "independent", "root"):
+                blocked_by = "None (Independent slice)" if idx > 1 else "None (can start immediately)"
+            elif raw_blocked:
+                blocked_by = raw_blocked
+            else:
+                blocked_by = prev_ticket_ref if idx > 1 else "None (can start immediately)"
         else:
             title = clean_step
             what_to_build = clean_step
-            blocked_by = prev_ticket_ref
+            if idx == 1:
+                blocked_by = "None (can start immediately)"
+            else:
+                blocked_by = prev_ticket_ref
 
         slug = slugify(title)
         filename = f"{idx:02d}-{slug}.md"
@@ -1207,8 +1340,8 @@ class PreFlightOps:
     def set_memory_architecture(
         workspace: Any,
         strategy: str,
-        communication: str,
-        rationale: str,
+        communication: str = "",
+        rationale: str = "",
         alternatives: str = "",
         failure_modes: list[str] | None = None,
         secondary_strategies: list[str] | None = None,
@@ -1221,10 +1354,20 @@ class PreFlightOps:
         for fm in failure_modes or []:
             if fm.strip() and fm.strip() not in existing_fms:
                 existing_fms.append(fm.strip())
-        if not existing_fms:
-            raise ValueError(
-                "`set-memory-arch` requires at least 1 `--failure-mode` describing an anticipated memory failure and mitigation."
-            )
+        is_stateless = (strategy or "").strip().lower() == "stateless"
+        if is_stateless:
+            if len(rationale.strip()) < 15:
+                raise ValueError(
+                    "`strategy: stateless` requires an explicit `--rationale` (>= 15 chars) "
+                    "explaining why agent communication and memory failure modes do not apply."
+                )
+            if not communication.strip():
+                communication = "Stateless (single-process / request-scoped; no persistent agent communication)"
+        else:
+            if not existing_fms:
+                raise ValueError(
+                    "`set-memory-arch` requires at least 1 `--failure-mode` describing an anticipated memory failure and mitigation."
+                )
 
         existing_secs = list(mem.get("secondary_strategies") or [])
         for sec in secondary_strategies or []:

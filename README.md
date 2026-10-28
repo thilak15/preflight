@@ -100,14 +100,14 @@ Unlike prompt-only skills where an LLM can grade itself `100%` with one-line sum
 | :--- | :---: | :--- |
 | **1. Problem & User Pain** (`problem`) | `20%` | Substantive summary ($\ge 40$ chars) + $\ge 2$ stress-tested `--edge-case` scenarios |
 | **2. Scope & Non-Goals** (`scope`) | `20%` | Explicit V1 non-goals ($\ge 40$ chars) + $\ge 2$ hard boundary `--edge-case` items |
-| **3. State, Memory & Agent Comm** (`memory`) | `20%` | Requires `set-memory-arch` (primary strategy, communication pattern, $\ge 1$ failure mode) + summary ($\ge 40$ chars) + $\ge 2$ `--edge-case` items |
+| **3. State, Memory & Agent Comm** (`memory`) | `20%` | Requires `set-memory-arch` (primary strategy, communication pattern, $\ge 1$ failure mode; stateless tools exempted with substantive $\ge 15$-char `--rationale`) + summary ($\ge 40$ chars) + $\ge 2$ `--edge-case` items |
 | **4. Bottlenecks & Failure Modes** (`bottlenecks`) | `20%` | Rate limits, latency, SPOFs ($\ge 40$ chars), and $\ge 2$ stress-tested mitigations |
 | **5. Prior-Art Differentiation** (`differentiation`) | `20%` | Requires `.preflight/prior-art.json` from `scout.py`, $\ge 2$ edge cases, and must explicitly cite $\ge 1$ discovered `owner/repo` |
 
 **Gate Unlock Rule (`evaluate_gate`):**
 - Total score $\ge 80\%$ with **zero** dimensions at `0%`
 - `.preflight/prior-art.json` present with scouted repositories
-- `set-memory-arch` configured (strategy + communication pattern + $\ge 1$ failure mode)
+- `set-memory-arch` configured (strategy + communication pattern + $\ge 1$ failure mode; stateless projects exempted with substantive rationale)
 - At least **1 Stack Explained tool entry** (`add-tool`)
 - At least **1 ADR** (`add-decision`) and **1 Red-Team Critique** (`add-critique`)
 - Both Mermaid diagrams (`topology` + `sequence`) populated via `set-design`

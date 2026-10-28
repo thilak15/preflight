@@ -1,5 +1,8 @@
 # Ordered Implementation Tickets: EdgeCron
 
+> **Canonical Notice:**
+> `.preflight/issues/` is the canonical generator destination produced by `render_blueprint.py` and `state.py export-tickets`. This top-level `issues/` directory is an intentional root mirror committed for direct repository browsing and visibility without requiring readers to expand hidden dotfiles.
+
 Work these tickets in order (one vertical slice per session/commit). Use `Title :: Details :: BlockedBy` in `set-design --step` to declare custom or parallel dependency edges:
 
 | # | Ticket File | Title | Blocked By | Status |

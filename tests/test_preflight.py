@@ -1068,6 +1068,253 @@ class TestArchitectureDeepening(unittest.TestCase):
         # Ensure FakeGitHubClient recorded the calls
         self.assertGreater(len(fake_client.calls), 0)
 
+    def test_tool_config_signature_pairing_and_workspace_content_verification(self) -> None:
+        # Create a workspace with a Dockerfile and a pyproject.toml
+        (self.workspace / "Dockerfile").write_text("FROM alpine:latest\n", encoding="utf-8")
+        (self.workspace / "pyproject.toml").write_text("[tool.uv]\ndev-dependencies = ['pytest']\n", encoding="utf-8")
+
+        # 1. Dockerfile pairs with Docker, but NOT with an unrelated tool like Redis
+        status_docker, src_docker = state.verify_config_proof(self.workspace, "Dockerfile", recommended="Docker")
+        self.assertEqual(status_docker, "verified")
+        self.assertEqual(src_docker, "workspace:Dockerfile")
+
+        status_redis, _ = state.verify_config_proof(self.workspace, "Dockerfile", recommended="Redis")
+        self.assertEqual(status_redis, "claimed-unverified")
+
+        # 2. pyproject.toml content contains 'uv' token -> pairs with uv
+        status_uv, src_uv = state.verify_config_proof(self.workspace, "pyproject.toml", recommended="uv")
+        self.assertEqual(status_uv, "verified")
+        self.assertEqual(src_uv, "workspace:pyproject.toml")
+
+        # 3. pyproject.toml content does NOT contain 'redis' token -> fails pairing
+        status_redis_toml, _ = state.verify_config_proof(self.workspace, "pyproject.toml", recommended="Redis")
+        self.assertEqual(status_redis_toml, "claimed-unverified")
+
+    def test_stateless_architecture_gate_exemption(self) -> None:
+        ops = state.PreFlightOps(self.store)
+        ops.init_project("StatelessCLI", reset=False)
+
+        # 1. Short rationale raises error
+        with self.assertRaises(ValueError):
+            ops.set_memory_architecture(
+                strategy="stateless",
+                rationale="short",
+            )
+
+        # 2. Substantive rationale sets default communication and exempts failure modes
+        st, mem = ops.set_memory_architecture(
+            strategy="stateless",
+            rationale="Single-process deterministic CLI tool with zero long-lived state or agent communication.",
+        )
+        self.assertEqual(mem["strategy"], "stateless")
+        self.assertIn("Stateless", mem["agent_communication_pattern"])
+        self.assertEqual(mem["failure_modes"], [])
+
+        # 3. Memory dimension validation accepts stateless without failure modes
+        err_stateless = state.validate_dimension_evidence(
+            workspace=self.workspace,
+            dimension="memory",
+            score=20,
+            summary="Deterministic CLI pipeline reading stdin and producing stdout with no state.",
+            edge_cases=["Empty input stream", "Broken pipe on stdout"],
+            state=st,
+        )
+        self.assertIsNone(err_stateless, f"Expected stateless memory dimension to validate, but got: {err_stateless}")
+
+        # 4. In contrast, stateful transactional-db without failure modes is rejected
+        st_stateful, mem_stateful = ops.set_memory_architecture(
+            strategy="transactional-db",
+            communication="Single-writer worker channel",
+            rationale="SQLite database for persistent records across restarts.",
+            failure_modes=["SQLITE_BUSY under concurrent writes -> mitigated by WAL mode and busy timeout"],
+        )
+        # Manually clear failure modes to test gate rejection
+        st_stateful["memory_architecture"]["failure_modes"] = []
+        err_broken = state.validate_dimension_evidence(
+            workspace=self.workspace,
+            dimension="memory",
+            score=20,
+            summary="Stateful SQLite database storing run records across process restarts.",
+            edge_cases=["Crash recovery during WAL checkpoint", "Corrupted index"],
+            state=st_stateful,
+        )
+        self.assertIsNotNone(err_broken)
+        self.assertIn("requires at least 1 memory failure mode", str(err_broken))
+
+    def test_ticket_criteria_specificity_and_no_blind_fallbacks(self) -> None:
+        decisions = [
+            {
+                "id": "ADR-0001",
+                "title": "SQLite WAL Engine",
+                "decision": "Use SQLite WAL for persistent audit log storage",
+            }
+        ]
+        critiques = [
+            {
+                "title": "SQLite WAL Write Lock Contention",
+                "attack": "High-frequency writes block read transactions",
+                "mitigation": "Single-writer channel with 100ms commit batches",
+                "severity": "high",
+            }
+        ]
+        tools = [
+            {
+                "recommended": "Docker",
+                "category": "container-runtime",
+                "config_proof": "Dockerfile",
+                "purpose": "Reproducible build container",
+                "why": "Consistent tests",
+                "stage": "now",
+            }
+        ]
+        mem = {
+            "strategy": "transactional-db",
+            "failure_modes": ["SQLITE_BUSY write contention -> mitigated by single writer channel loop"],
+        }
+
+        # Step 1: Pure CLI parsing slice - no sqlite, db, or container tokens
+        step_cli = "Bootstrap CLI argument parser and config validation"
+        crit_cli = state.build_ticket_acceptance_criteria(step_cli, step_cli, decisions, critiques, tools, mem)
+
+        # Criteria must NOT blindly include ADR-0001 or Critique-0001
+        self.assertFalse(any("ADR-0001" in c or "SQLite WAL Engine" in c for c in crit_cli))
+        self.assertFalse(any("Write Lock Contention" in c for c in crit_cli))
+        self.assertTrue(any("Bootstrap CLI argument parser" in c for c in crit_cli))
+
+        # Step 2: Step that explicitly touches SQLite WAL engine with single writer channel
+        step_db = "Implement SQLite WAL single writer channel storage engine and batch commit loop"
+        crit_db = state.build_ticket_acceptance_criteria(step_db, step_db, decisions, critiques, tools, mem)
+
+        # Criteria MUST include the matching ADR and matching Critique
+        self.assertTrue(any("ADR-0001" in c for c in crit_db))
+        self.assertTrue(any("Write Lock Contention" in c for c in crit_db))
+        self.assertTrue(any("Verifies memory failure guard" in c for c in crit_db))
+
+        # Test export tickets blocked-by syntax for independent slices
+        target_dir = self.workspace / ".preflight" / "issues"
+        fake_state = {
+            "project_name": "TestSlices",
+            "system_design": {
+                "implementation_steps": [
+                    "Ticket One :: First slice :: None",
+                    "Ticket Two :: Independent second slice :: Independent",
+                ]
+            },
+            "decisions": decisions,
+            "red_team_critiques": critiques,
+            "tooling_recommendations": tools,
+            "memory_architecture": mem,
+        }
+        exported = state.export_tickets_to_dir(
+            workspace=self.workspace,
+            state=fake_state,
+            decisions=decisions,
+            issues_dir=target_dir,
+            is_draft=False,
+        )
+        self.assertEqual(len(exported), 2)
+        ticket_two_text = exported[1].read_text(encoding="utf-8")
+        self.assertIn("**Blocked by:** None (Independent slice)", ticket_two_text)
+
+    def test_scout_pagination_and_quota_separation(self) -> None:
+        fake_client = scout.FakeGitHubClient()
+
+        # Page 1 handler (with Search API headers)
+        def handle_page1(url: str) -> dict[str, Any]:
+            return {
+                "items": [
+                    {
+                        "full_name": f"acme/tool-p1-{i}",
+                        "html_url": f"https://github.com/acme/tool-p1-{i}",
+                        "description": "Paginated tool repo",
+                        "stargazers_count": 1000 - i,
+                        "forks_count": 50,
+                        "open_issues_count": 2,
+                        "has_issues": True,
+                        "language": "Go",
+                        "topics": ["scheduler"],
+                        "created_at": "2025-01-01T00:00:00Z",
+                        "pushed_at": "2026-10-25T00:00:00Z",
+                        "archived": False,
+                    }
+                    for i in range(5)
+                ]
+            }
+
+        # Page 2 handler (with Search API headers)
+        def handle_page2(url: str) -> dict[str, Any]:
+            return {
+                "items": [
+                    {
+                        "full_name": f"acme/tool-p2-{i}",
+                        "html_url": f"https://github.com/acme/tool-p2-{i}",
+                        "description": "Page 2 competitor",
+                        "stargazers_count": 800 - i,
+                        "forks_count": 30,
+                        "open_issues_count": 1,
+                        "has_issues": True,
+                        "language": "Go",
+                        "topics": ["scheduler"],
+                        "created_at": "2025-02-01T00:00:00Z",
+                        "pushed_at": "2026-10-25T00:00:00Z",
+                        "archived": False,
+                    }
+                    for i in range(3)
+                ]
+            }
+
+        fake_client.add_handler(
+            lambda url: "/search/repositories" in url and "page=1" in url,
+            handle_page1,
+        )
+        fake_client.add_handler(
+            lambda url: "/search/repositories" in url and "page=2" in url,
+            handle_page2,
+        )
+
+        # Override get_json on fake_client to inject search vs core headers dynamically
+        orig_get_json = fake_client.get_json
+
+        def get_json_with_quotas(url: str, token: str | None = None) -> tuple[Any, dict[str, str]]:
+            payload, headers = orig_get_json(url, token)
+            if "/search/" in url:
+                return payload, {
+                    "X-RateLimit-Limit": "30",
+                    "X-RateLimit-Remaining": "27",
+                    "X-RateLimit-Reset": "1793183060",
+                }
+            return payload, {
+                "X-RateLimit-Limit": "5000",
+                "X-RateLimit-Remaining": "4967",
+                "X-RateLimit-Reset": "1793183000",
+            }
+        fake_client.get_json = get_json_with_quotas
+
+        cache = scout.RepoCache(self.store.cache_path)
+        try:
+            report = scout.scout_github(
+                queries=["paginated-query"],
+                cache=cache,
+                token="test-token",
+                auth_source="token",
+                max_repos_per_query=5,
+                max_pages=2,
+                client=fake_client,
+            )
+        finally:
+            cache.close()
+
+        # Both pages should be discovered (5 from page 1 + 3 from page 2 = 8 repos)
+        self.assertEqual(len(report["active_incumbents"]), 8)
+        self.assertEqual(report["search_limits"]["max_pages_per_query"], 2)
+
+        # Quotas must be segregated: Search API vs Core API
+        rl = report["rate_limit"]
+        self.assertEqual(rl["search_api"]["remaining"], 27)
+        self.assertEqual(rl["search_api"]["limit"], 30)
+        self.assertEqual(rl["remaining"], 27)
+        self.assertEqual(rl["limit"], 30)
+
 
 if __name__ == "__main__":
     unittest.main()

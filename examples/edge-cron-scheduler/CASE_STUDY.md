@@ -3,6 +3,7 @@
 > **Provenance & Reproducibility Note:**
 > - **Dialogue Format:** The Socratic interview dialogue below is an **Illustrative Walkthrough** showing how PreFlight's frontier questions and developer answers flow in practice.
 > - **Committed Live Evidence:** All repository star counts, config-file detections, dormant signals, and issue numbers (`dkron-io/dkron#1001`, `dkron-io/dkron#966`, `dkron-io/dkron#712`, `dagucloud/dagu#1260`, `dagucloud/dagu#695`, `dagucloud/dagu#2806`) come from a **real `scout.py` execution** committed in [`.preflight/prior-art.json`](./.preflight/prior-art.json), with the full locked state in [`.preflight/state.json`](./.preflight/state.json) and [`.preflight/decisions.json`](./.preflight/decisions.json).
+> - **Canonical Tickets Destination:** [`.preflight/issues/`](./.preflight/issues/) is the canonical generator output of `render_blueprint.py` / `state.py export-tickets`; [`issues/`](./issues/) is committed as an unhidden root mirror so developers can browse tickets directly on GitHub without expanding dotfiles.
 
 ---
 

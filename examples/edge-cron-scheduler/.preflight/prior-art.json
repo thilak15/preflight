@@ -2,18 +2,31 @@
   "scouted_at": "2026-10-28T09:24:58+00:00",
   "auth_source": "gh-cli",
   "rate_limit": {
+    "search_api": {
+      "quota": "30 req/min",
+      "remaining": 26,
+      "limit": 30,
+      "reset_epoch": 1793183060
+    },
+    "core_api": {
+      "quota": "5000 req/hour",
+      "remaining": 4967,
+      "limit": 5000,
+      "reset_epoch": 1793183000
+    },
     "search_api_quota": "30 req/min",
-    "remaining": 4967,
-    "limit": 5000,
-    "reset_epoch": 1793183000
+    "remaining": 26,
+    "limit": 30,
+    "reset_epoch": 1793183060
   },
   "search_limits": {
     "max_repos_per_query": 8,
+    "max_pages_per_query": 2,
     "max_incumbents_for_issues": 4,
     "issues_per_repo": 5,
-    "sort_order": "stars:desc (single page per query; star-weighted sample)",
+    "sort_order": "stars:desc (2 page(s) per query; star-weighted sample with pagination)",
     "default_free_text_scope": "in:name,description (unless explicit topic:, in:, or repo: qualifier is passed)",
-    "graveyard_heuristic": "Archived by maintainer OR >365 days since last git push. Inactivity is a maintenance signal only \u2014 never claim a repo stalled due to a specific architectural choice without issue/commit evidence.",
+    "graveyard_heuristic": "Archived by maintainer OR >365 days since last git push. Inactivity is a maintenance signal only — never claim a repo stalled due to a specific architectural choice without issue/commit evidence.",
     "star_velocity_heuristic": "Approximate lifetime average (total_stars / age_months), not recent adoption momentum."
   },
   "queries": [

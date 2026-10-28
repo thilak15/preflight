@@ -693,22 +693,34 @@ def github_get_json(
     data, headers = client.get_json(url, token=token)
 
     if rate_limit_info is not None:
+        is_search = "/search/" in url
+        # Track Search API quotas separately from Core API quotas
+        target_info = rate_limit_info.setdefault("search_api" if is_search else "core_api", {})
         rem = headers.get("X-RateLimit-Remaining")
         lim = headers.get("X-RateLimit-Limit")
         rst = headers.get("X-RateLimit-Reset")
         if rem is not None:
             try:
-                rate_limit_info["remaining"] = int(rem)
+                val = int(rem)
+                target_info["remaining"] = val
+                if is_search:
+                    rate_limit_info["remaining"] = val
             except (ValueError, TypeError):
                 pass
         if lim is not None:
             try:
-                rate_limit_info["limit"] = int(lim)
+                val = int(lim)
+                target_info["limit"] = val
+                if is_search:
+                    rate_limit_info["limit"] = val
             except (ValueError, TypeError):
                 pass
         if rst is not None:
             try:
-                rate_limit_info["reset_epoch"] = int(rst)
+                val = int(rst)
+                target_info["reset_epoch"] = val
+                if is_search:
+                    rate_limit_info["reset_epoch"] = val
             except (ValueError, TypeError):
                 pass
 
@@ -745,6 +757,7 @@ def scout_github(
     max_repos_per_query: int = 8,
     max_incumbents_for_issues: int = 4,
     issues_per_repo: int = 5,
+    max_pages: int = 2,
     client: GitHubClient | None = None,
 ) -> dict[str, Any]:
     if client is None:
@@ -755,11 +768,24 @@ def scout_github(
         max_repos_per_query = min(max_repos_per_query, 5)
         max_incumbents_for_issues = min(max_incumbents_for_issues, 2)
         issues_per_repo = min(issues_per_repo, 3)
+        max_pages = 1
 
     discovered: dict[str, dict[str, Any]] = {}
     building_blocks: dict[str, dict[str, Any]] = {}
     errors: list[str] = []
     rate_limit_info: dict[str, Any] = {
+        "search_api": {
+            "quota": "30 req/min" if token else "10 req/min",
+            "remaining": None,
+            "limit": None,
+            "reset_epoch": None,
+        },
+        "core_api": {
+            "quota": "5000 req/hour" if token else "60 req/hour",
+            "remaining": None,
+            "limit": None,
+            "reset_epoch": None,
+        },
         "search_api_quota": "30 req/min" if token else "10 req/min",
         "remaining": None,
         "limit": None,
@@ -770,31 +796,40 @@ def scout_github(
     combined_tool_queries = list(tool_queries or []) + [normalize_topic_query(t) for t in (tool_topics or []) if t.strip()]
 
     for q in combined_competitor_queries:
-        if rate_limit_info.get("remaining") is not None and int(rate_limit_info["remaining"]) <= 1:
-            errors.append("GitHub Search API rate limit nearly exhausted; skipping remaining queries.")
-            break
         scoped_q = normalize_repo_query(q)
         encoded_q = urllib.parse.quote(scoped_q)
-        url = f"https://api.github.com/search/repositories?q={encoded_q}&sort=stars&order=desc&per_page={max_repos_per_query}"
-        try:
-            payload = github_get_json(url, token, cache, rate_limit_info, client=client)
-            for item in payload.get("items", []):
-                if item.get("fork") or is_noise_repo(item):
-                    continue
-                classified = classify_repo(item)
-                classified["matched_query"] = q
-                full_name = classified["full_name"]
-                if full_name not in discovered:
-                    discovered[full_name] = classified
-                    cache.upsert_repo(classified)
-        except urllib.error.HTTPError as e:
-            retry_after = e.headers.get("Retry-After") if e.headers else None
-            msg = f"Search query '{q}' failed: HTTP {e.code} ({e.reason})"
-            if retry_after:
-                msg += f" [Retry-After: {retry_after}s]"
-            errors.append(msg)
-        except Exception as e:
-            errors.append(f"Search query '{q}' failed: {e}")
+        for page in range(1, max_pages + 1):
+            if rate_limit_info.get("remaining") is not None and int(rate_limit_info["remaining"]) <= 1:
+                errors.append("GitHub Search API rate limit nearly exhausted; skipping remaining queries.")
+                break
+            url = f"https://api.github.com/search/repositories?q={encoded_q}&sort=stars&order=desc&per_page={max_repos_per_query}&page={page}"
+            try:
+                payload = github_get_json(url, token, cache, rate_limit_info, client=client)
+                items = payload.get("items", []) if isinstance(payload, dict) else []
+                if not items:
+                    break
+                for item in items:
+                    if item.get("fork") or is_noise_repo(item):
+                        continue
+                    classified = classify_repo(item)
+                    classified["matched_query"] = q
+                    full_name = classified["full_name"]
+                    if full_name not in discovered:
+                        discovered[full_name] = classified
+                        cache.upsert_repo(classified)
+                if len(items) < max_repos_per_query:
+                    # Last page of results reached
+                    break
+            except urllib.error.HTTPError as e:
+                retry_after = e.headers.get("Retry-After") if e.headers else None
+                msg = f"Search query '{q}' (page {page}) failed: HTTP {e.code} ({e.reason})"
+                if retry_after:
+                    msg += f" [Retry-After: {retry_after}s]"
+                errors.append(msg)
+                break
+            except Exception as e:
+                errors.append(f"Search query '{q}' (page {page}) failed: {e}")
+                break
 
     # Scout open-source building blocks / libraries / tooling if requested
     for tq in combined_tool_queries:
@@ -915,9 +950,10 @@ def scout_github(
 
     search_limits = {
         "max_repos_per_query": max_repos_per_query,
+        "max_pages_per_query": max_pages,
         "max_incumbents_for_issues": max_incumbents_for_issues,
         "issues_per_repo": issues_per_repo,
-        "sort_order": "stars:desc (single page per query; star-weighted sample)",
+        "sort_order": f"stars:desc ({max_pages} page(s) per query; star-weighted sample with pagination)",
         "default_free_text_scope": "in:name,description (unless explicit topic:, in:, or repo: qualifier is passed)",
         "graveyard_heuristic": (
             f"Archived by maintainer OR >{GRAVEYARD_DAYS_THRESHOLD} days since last git push. "
@@ -953,20 +989,31 @@ def format_markdown_digest(report: dict[str, Any]) -> str:
     rl = report.get("rate_limit") or {}
     limits = report.get("search_limits") or {}
 
-    rl_str = rl.get("search_api_quota", "unknown")
-    if rl.get("remaining") is not None and rl.get("limit") is not None:
-        rl_str += f" ({rl['remaining']}/{rl['limit']} remaining in current window)"
+    search_rl = rl.get("search_api") or {}
+    core_rl = rl.get("core_api") or {}
+    rl_parts = []
+    if search_rl.get("remaining") is not None and search_rl.get("limit") is not None:
+        rl_parts.append(f"Search API: {search_rl['remaining']}/{search_rl['limit']} ({search_rl.get('quota', '30/min')})")
+    elif rl.get("remaining") is not None and rl.get("limit") is not None:
+        rl_parts.append(f"Search API: {rl['remaining']}/{rl['limit']}")
+    else:
+        rl_parts.append(f"Search API: {rl.get('search_api_quota', 'unknown')}")
+
+    if core_rl.get("remaining") is not None and core_rl.get("limit") is not None:
+        rl_parts.append(f"Core API: {core_rl['remaining']}/{core_rl['limit']} ({core_rl.get('quota', '5000/hr')})")
+    rl_str = " | ".join(rl_parts)
 
     lines = [
         "# Prior-Art & Stack Config Scout Digest",
-        f"- **Auth Mode:** `{report.get('auth_source', 'unknown')}` — Search API Quota: `{rl_str}`",
+        f"- **Auth Mode:** `{report.get('auth_source', 'unknown')}` — Quotas: `{rl_str}`",
         f"- **Competitor Queries (`-q` / `--topic`):** {', '.join(f'`{q}`' for q in report.get('queries', []))}",
     ]
     if report.get("tool_queries"):
         lines.append(f"- **OSS Tooling Queries (`-t` / `--tool-topic`):** {', '.join(f'`{q}`' for q in report.get('tool_queries', []))}")
     if limits:
+        pages_note = f" (across up to {limits.get('max_pages_per_query', 1)} pages)" if limits.get("max_pages_per_query", 1) > 1 else ""
         lines.append(
-            f"- **Search Scope & Heuristics:** Up to {limits.get('max_repos_per_query', 8)} star-sorted repos/query "
+            f"- **Search Scope & Heuristics:** Up to {limits.get('max_repos_per_query', 8)} star-sorted repos/query{pages_note} "
             f"(`{limits.get('default_free_text_scope', 'in:name,description')}`). "
             "Star velocity (`stars / age_months`) and the >365d dormant threshold are heuristics, not causal proof."
         )
@@ -1087,6 +1134,12 @@ def main(argv: list[str] | None = None) -> int:
         help="GitHub topic qualifier for open-source building blocks (e.g. 'sqlite', 'cron')",
     )
     parser.add_argument("--max-repos", type=int, default=8, help="Max repos per query")
+    parser.add_argument(
+        "--pages",
+        type=int,
+        default=2,
+        help="Max search result pages to scan per query (default: 2 for authenticated, 1 for unauthenticated)",
+    )
     parser.add_argument("--json", action="store_true", help="Print JSON output instead of Markdown digest")
 
     args = parser.parse_args(argv)
@@ -1109,6 +1162,7 @@ def main(argv: list[str] | None = None) -> int:
             topics=args.topic,
             tool_topics=args.tool_topic,
             max_repos_per_query=args.max_repos,
+            max_pages=args.pages,
         )
     finally:
         cache.close()
