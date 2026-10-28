@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# NOTE: This is a dev-only script, intended for use by maintainers/developers
-# of this repo. It is not a supported installer. Modifications to it, or requests
-# for modifications, will not be approved.
+# Primary live-symlink installer for the PreFlight skill.
 #
 # Design Decision: Safety by default on real folders.
 # This script will NOT silently `rm -rf` a real, non-symlink folder at any
@@ -11,11 +9,11 @@ set -euo pipefail
 # the script refuses and exits 1 by default. Pass `--force` to explicitly replace
 # an existing real folder with a symlink.
 #
-# Links the single `preflight` skill into the local skill directories used by
+# Links the `preflight` skill into the local skill directories used by
 # each agent harness:
 #   - ~/.claude/skills: Claude Code
 #   - ~/.agents/skills: Codex and other Agent Skills-compatible harnesses
-#   - ~/.gemini/config/skills: Google Gemini Antigravity (verified from README)
+#   - ~/.gemini/config/skills: Google Gemini Antigravity
 #
 # Each entry is a symlink pointing directly into this clone, so a `git pull`
 # is all that is needed to keep installed skills up to date without re-copying.
