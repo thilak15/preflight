@@ -2,6 +2,18 @@
 
 All notable changes to **PreFlight** are documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- **Readiness Gate includes diagrams (`state.py evaluate_gate`)**: Missing `topology_mermaid` / `sequence_mermaid` now keeps the gate locked, so `state.py status`, `export-tickets`, and `render_blueprint.py` agree, and `render_blueprint.py --force` always watermarks placeholder diagrams as `DRAFT`.
+- **Differentiation citations (`state.py cites_repo`)**: A `20/20` differentiation score now requires a whole-token `owner/repo` citation; bare repo names like `cron` no longer pass by matching ordinary words.
+- **Config proof verification (`state.py verify_config_proof`)**: An explicit `--config-proof` filename that was never observed stays `claimed-unverified`, even if the tool name matches a scouted config.
+
+### Changed
+- Shared `format_memory_architecture_lines()` renders the Memory Architecture in both `STACK.md` and `SPEC.md`.
+- Removed duplicate `examples/edge-cron-scheduler/.preflight/STACK.md` and `.preflight/issues/` (the published copies live at the example root).
+- Updated module docstrings, `GLOSSARY.md` (**Proof Status**, secondary strategies, ADR-preserving reset), and ADR-0003.
+
 ## [0.2.0] - 2026-10-28
 
 ### Added

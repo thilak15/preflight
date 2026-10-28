@@ -10,13 +10,15 @@ Reads:
 
 Enforces:
 1. Evidence-based Readiness Gate (`evaluate_gate`: score >= 80%, no 0% dimensions, `prior-art.json` present,
-   >= 1 ADR, >= 1 Red-Team Critique).
-2. Explicit `topology_mermaid` and `sequence_mermaid` in `system_design` (rejects missing diagrams so
-   placeholder diagrams are never shipped behind a "PASSED" badge).
+   >= 1 ADR, >= 1 Red-Team Critique, a Memory Architecture with >= 1 failure mode, >= 1 Stack Explained
+   tool entry, and both `topology_mermaid` and `sequence_mermaid` populated via `set-design`).
+2. `--force` renders a preview while the gate is locked, but watermarks every output as DRAFT so
+   placeholder diagrams are never shipped behind a "PASSED" badge.
 
 Outputs:
-- `blueprint_report.html`: Dark-mode interactive HTML dashboard with Mermaid.js diagrams, Tooling & Stack
-  recommendations, Memory & Agent Communication breakdown, offline raw source fallback, and 1-click "Copy Spec Markdown".
+- `blueprint_report.html`: Dark-mode interactive HTML dashboard with Mermaid.js diagrams (rendering requires
+  internet access for the Mermaid CDN; raw source is always viewable), Tooling & Stack recommendations,
+  Memory & Agent Communication breakdown, and 1-click "Copy Spec Markdown".
 - `.preflight/SPEC.md` (or `--spec-output`): Clean Markdown specification document ready for implementation.
 - `.preflight/STACK.md`: Dedicated Tooling, OSS Building Blocks, Project Maintenance & Memory Architecture doc.
 """
@@ -36,6 +38,7 @@ from state import (
     build_stack_markdown,
     evaluate_gate,
     export_tickets_to_dir,
+    format_memory_architecture_lines,
     format_memory_strategy_display,
     format_stack_explained_table,
     load_decisions,
@@ -123,24 +126,8 @@ def build_spec_markdown(
     # Memory & Agent Communication Section
     mem = state.get("memory_architecture") or {}
     if mem.get("strategy") or mem.get("agent_communication_pattern") or mem.get("failure_modes"):
-        secondaries = [s for s in (mem.get("secondary_strategies") or []) if s]
-        lines.extend(
-            [
-                "### Memory, State & Agent Communication Workflow",
-                "",
-                f"- **Primary Memory Strategy:** `{mem.get('strategy') or 'Unspecified'}`",
-                f"- **Secondary / Combined Strategies:** {', '.join(f'`{s}`' for s in secondaries) if secondaries else 'None (single-strategy)'}",
-                f"- **Combined Memory Profile:** `{format_memory_strategy_display(mem)}`",
-                f"- **Agent / Component Communication Pattern:** {mem.get('agent_communication_pattern') or '—'}",
-                f"- **Workflow Memory Lifecycle:** {mem.get('workflow_memory_flow') or '—'}",
-                f"- **Why Chosen (vs. RAG / Vector DB / Alternatives):** {mem.get('rationale') or '—'}",
-                f"- **Alternatives Considered:** {mem.get('alternatives_considered') or '—'}",
-                "",
-            ]
-        )
-        for fm in mem.get("failure_modes") or []:
-            lines.append(f"- ⚠️ **Memory Failure Mode & Mitigation:** {fm}")
-        lines.append("")
+        lines.extend(["### Memory, State & Agent Communication Workflow", ""])
+        lines.extend(format_memory_architecture_lines(mem, failure_heading="**Memory Failure Modes & Mitigations:**"))
 
     # Tooling, OSS Building Blocks & Project Maintenance Section ("Stack Explained")
     sec_num = 3
@@ -998,14 +985,9 @@ def main(argv: list[str] | None = None) -> int:
     sys_design = state.get("system_design") or {}
     topology_mermaid = (sys_design.get("topology_mermaid") or "").strip()
     sequence_mermaid = (sys_design.get("sequence_mermaid") or "").strip()
-    if (not topology_mermaid or not sequence_mermaid) and not args.force:
-        print(
-            "ERROR: `system_design.topology_mermaid` and `system_design.sequence_mermaid` must be populated "
-            "via `state.py set-design` before rendering the Blueprint (refusing to render generic placeholder diagrams).",
-            file=sys.stderr,
-        )
-        return 2
 
+    # Missing diagrams keep the gate locked (see `evaluate_gate`), so placeholders are only ever
+    # injected on the `--force` path, where every output is watermarked DRAFT.
     if not topology_mermaid:
         topology_mermaid = "flowchart LR\n    Draft[\"Draft Topology (Pending set-design)\"]"
         sys_design["topology_mermaid"] = topology_mermaid

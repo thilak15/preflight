@@ -52,11 +52,13 @@ Directly addresses verified pain points in `dkron-io/dkron` (`#1001` Raft quorum
 - **Combined Memory Profile:** `transactional-db (primary) + lexical-fts (secondary)`
 - **Agent / Component Communication Pattern:** Single-writer Go channel (`chan StateTransition`) batching step heartbeats from worker goroutines into SQLite WAL every 100ms; asynchronous mTLS push outbox (`sync_outbox`) to hub.
 - **Workflow Memory Lifecycle:** Append-only `dag_runs` and `step_attempts` state transitions committed with `PRAGMA synchronous=NORMAL`, paired with SQLite FTS5 over structured step stderr/stdout logs (`step_logs_fts`) and a 50MB ring-buffer cap.
-- **Why Chosen (vs. RAG / Vector DB / Alternatives):** EdgeCron schedules deterministic DAG transitions and searches exact exit codes/error symbols in local step logs. Embedded SQLite WAL + FTS5 provides ACID crash recovery and fast exact log search with zero external daemons, avoiding the Raft quorum loss seen in `dkron-io/dkron#1001` and the shared-filesystem coupling in `dagucloud/dagu#1260`.
+- **Why This Strategy (vs. RAG / Vector DB / Alternatives):** EdgeCron schedules deterministic DAG transitions and searches exact exit codes/error symbols in local step logs. Embedded SQLite WAL + FTS5 provides ACID crash recovery and fast exact log search with zero external daemons, avoiding the Raft quorum loss seen in `dkron-io/dkron#1001` and the shared-filesystem coupling in `dagucloud/dagu#1260`.
 - **Alternatives Considered:** Embedded etcd/Raft (`dkron-io/dkron#1001` — loses cluster quorum when 2 of 3 nodes restart or change IP); Flat YAML/JSON status files (`dagucloud/dagu#1260` — requires shared filesystem across workers); Vector DB / RAG (unnecessary overhead for deterministic state and exact log tokens).
 
-- ⚠️ **Memory Failure Mode & Mitigation:** SQLITE_BUSY lock contention under 50+ concurrent step heartbeats -> Mitigated by funneling all writes through a single Go channel batching commits every 100ms.
-- ⚠️ **Memory Failure Mode & Mitigation:** Unbounded disk growth on 8GB industrial eMMC flash -> Mitigated by 50MB per-DAG ring buffer and automatic 30-day run history pruning.
+**Memory Failure Modes & Mitigations:**
+
+- ⚠️ SQLITE_BUSY lock contention under 50+ concurrent step heartbeats -> Mitigated by funneling all writes through a single Go channel batching commits every 100ms.
+- ⚠️ Unbounded disk growth on 8GB industrial eMMC flash -> Mitigated by 50MB per-DAG ring buffer and automatic 30-day run history pruning.
 
 ## 3. Stack Explained (Tooling, Alternatives, Now vs. Later & Proof Status)
 

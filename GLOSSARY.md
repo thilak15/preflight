@@ -15,7 +15,7 @@ A threshold across the five grilling dimensions that blocks blueprint generation
 _Avoid_: Validation check, completion score, progress bar
 
 **Fresh Reset**:
-The explicit clearing of all previously recorded dimension scores, state, decisions, prior-art snapshots, and generated specs (`state.py reset` or `state.py init --reset`) so a new idea or clean re-run starts from zero in the same workspace.
+The explicit clearing of all previously recorded dimension scores, state, decisions, prior-art snapshots, and generated specs (`state.py reset` or `state.py init --reset`) so a new idea or clean re-run starts from zero in the same workspace. Only ADRs recorded in `decisions.json` are deleted (none with `--keep-adrs`).
 _Avoid_: Folder wipe, manual delete
 
 ### Prior-Art & Tooling Scouting
@@ -48,6 +48,10 @@ _Avoid_: Generic tech stack list, unverified tool wish-list
 Empirical evidence from a scouted repository's configuration files (`pyproject.toml`, `uv.lock`, `poetry.lock`, `Dockerfile`, `.github/workflows`, `.pre-commit-config.yaml`) proving that a specific build, container, or CI tool is used in production.
 _Avoid_: README keyword match, guessed stack
 
+**Proof Status**:
+The verification label on each Stack Explained entry: `verified` when its Config Proof names a file present in the workspace or observed by `scout.py`, otherwise `claimed-unverified`. Rendered as `✅ Verified` vs. `⚠️ Claimed / Unverified`.
+_Avoid_: Trusted, confirmed (without evidence)
+
 **Implementation Ticket Graph**:
 The set of dependency-ordered, self-contained vertical-slice issue files (`.preflight/issues/01-<slug>.md`, `02-<slug>.md`, ..., and `.preflight/issues/INDEX.md`) exported by `state.py export-tickets` and `render_blueprint.py` once the Readiness Gate unlocks.
 _Avoid_: Unordered task list, horizontal layer tasks
@@ -59,7 +63,7 @@ _Avoid_: Issue scraping, bug analysis, sentiment analysis
 ### Memory, State & Output
 
 **Memory & Communication Strategy**:
-The prescribed pattern for how components or agents communicate and persist state across the workflow (`stateless`, `transactional-db`, `lexical-fts`, `rag-vector-db`, `hybrid-search`, or `episodic-agent-state`), paired with its specific memory failure modes.
+The prescribed pattern for how components or agents communicate and persist state across the workflow: one primary strategy (`stateless`, `transactional-db`, `lexical-fts`, `rag-vector-db`, `hybrid-search`, or `episodic-agent-state`) plus optional secondary strategies for combined designs, paired with its specific memory failure modes.
 _Avoid_: Just add RAG, vector store
 
 **Working State**:

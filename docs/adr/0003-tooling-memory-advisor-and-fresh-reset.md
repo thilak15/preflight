@@ -9,12 +9,14 @@
 1. **Tooling, OSS Building Blocks & Project Maintenance Stack (`state.py add-tool` + `scout.py -t`)**:
    - Extend `scout.py` with `--tool-query` (`-t`) to discover actively maintained open-source building blocks (libraries, SDKs, frameworks) on GitHub alongside competitor repositories.
    - Extend `state.py` with `add-tool` across standard operational and engineering categories (`dependency-lock`, `container-runtime`, `orchestration-deploy`, `ci-cd-quality`, `core-oss`, `storage-memory`, `observability`) so every project blueprint recommends day-1 project maintenance tooling (e.g., `uv.lock` / `poetry.lock`, `Docker` multi-stage builds, `Docker Compose` vs. `Kubernetes`, CI pipelines) with explicit rationales and viable alternatives.
-   - Auto-generate `.preflight/STACK.md` and render Tab 3 (`Tooling, Maintenance & Memory`) in `blueprint_report.html`.
+   - Auto-generate `.preflight/STACK.md` and render Tab 3 (`Stack Explained & Memory`) in `blueprint_report.html`.
+   - Each `add-tool` entry records a **Proof Status**: `verified` when `--config-proof` names a file that exists in the workspace or was observed by `scout.py` (`observed_stack_configs` / `detected_configs`), otherwise `claimed-unverified` (with a stderr warning). A tool-name match only verifies proofs that name no concrete file.
 2. **Memory, State & Agent Communication Advisor (`state.py set-memory-arch`)**:
    - Keep `memory` (`State, Memory & Agent Communication`) as a core `20%` Readiness Gate dimension.
-   - Require explicit selection and justification among `stateless`, `transactional-db`, `lexical-fts`, `rag-vector-db`, `hybrid-search`, and `episodic-agent-state`, together with the agent/component communication pattern and anticipated memory failure modes.
+   - Require explicit selection and justification of a primary strategy among `stateless`, `transactional-db`, `lexical-fts`, `rag-vector-db`, `hybrid-search`, and `episodic-agent-state` (plus optional repeatable `--secondary-strategy` for combined designs), together with the agent/component communication pattern and at least one anticipated memory failure mode. The Readiness Gate stays locked until this and at least one `add-tool` entry are recorded.
 3. **Fresh Reset (`state.py reset` and `state.py init --reset`)**:
    - Add a `reset` subcommand and `init --reset` flag that deletes all pre-performed scores, state, decisions, prior-art snapshots, and generated specs so users can run a new idea or re-run the same idea cleanly from zero in the same directory while preserving `.preflight/cache.db` by default (with `--purge-cache` to wipe SQLite cache).
+   - Only ADR files listed in `.preflight/decisions.json` are deleted; pre-existing `docs/adr/NNNN-*.md` files are never touched, and `--keep-adrs` preserves PreFlight-generated ADRs too.
 4. **Implementation Ticket Graph Export (`state.py export-tickets` + `render_blueprint.py`)**:
    - Automatically compile locked decisions (ADRs), Day-1 `NOW` tools (`Stack Explained`), Memory Architecture rules, Red-Team mitigations, and ordered implementation steps into individual dependency-ordered issue files under `.preflight/issues/01-<slug>.md`, `02-<slug>.md`, ..., plus `.preflight/issues/INDEX.md`.
 

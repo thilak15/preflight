@@ -14,13 +14,19 @@ Programmatic Evidence Rules (anti-theater enforcement):
 2. `dimension == "differentiation"` with `score > 0` requires:
    - `.preflight/prior-art.json` must exist and contain at least 1 scouted repository
    - For `score == 20`, the summary or edge cases must explicitly cite at least one discovered
-     repository (`owner/repo` or repo name) from `prior-art.json`.
-3. `readiness_unlocked` requires:
+     repository by its full `owner/repo` name from `prior-art.json` (bare repo names such as
+     `cron` are rejected because they collide with ordinary words).
+3. `dimension == "memory"` with `score == 20` requires `set-memory-arch` (strategy, communication
+   pattern, and >= 1 failure mode).
+4. `readiness_unlocked` requires:
    - Total score >= 80%
    - Zero dimensions at 0%
-   - `.preflight/prior-art.json` present
+   - `.preflight/prior-art.json` present with >= 1 discovered repository
    - At least 1 recorded ADR in `.preflight/decisions.json`
    - At least 1 recorded Red-Team Critique in `red_team_critiques`
+   - A Memory Architecture (`set-memory-arch`: strategy, communication pattern, >= 1 failure mode)
+   - At least 1 Stack Explained tool entry (`add-tool`)
+   - Both `topology_mermaid` and `sequence_mermaid` populated via `set-design`
 """
 
 from __future__ import annotations
@@ -265,10 +271,20 @@ def verify_config_proof(workspace: Path, config_proof: str, recommended: str = "
             for cand in candidates:
                 if cand.lower() and cand.lower() in oc_cfg:
                     return "verified", f"scout:{oc.get('config_file')}"
-            if oc_tool and rec_lower and (oc_tool in rec_lower or rec_lower in oc_tool):
+            # Tool-name fallback only applies when the proof names no concrete file; an explicit
+            # filename that was never observed must stay unverified.
+            if not candidates and oc_tool and rec_lower and (oc_tool in rec_lower or rec_lower in oc_tool):
                 return "verified", f"scout:{oc.get('config_file')}"
 
     return "claimed-unverified", "unverified-claim"
+
+
+def cites_repo(text: str, full_name: str) -> bool:
+    """Return True when `text` cites `full_name` (`owner/repo`) as a whole token, not a substring."""
+    if not full_name:
+        return False
+    pattern = r"(?<![\w./-])" + re.escape(full_name) + r"(?![\w/-])"
+    return re.search(pattern, text) is not None
 
 
 def evaluate_gate(state: dict[str, Any], workspace: Path | None = None) -> tuple[int, bool, list[str]]:
@@ -297,6 +313,12 @@ def evaluate_gate(state: dict[str, Any], workspace: Path | None = None) -> tuple
 
     if not (state.get("red_team_critiques") or []):
         missing.append("At least 1 Red-Team Critique (`add-critique`) is required")
+
+    sys_design = state.get("system_design") or {}
+    if not (sys_design.get("topology_mermaid") or "").strip() or not (sys_design.get("sequence_mermaid") or "").strip():
+        missing.append(
+            "Both `topology_mermaid` and `sequence_mermaid` must be populated (`set-design --topology ... --sequence ...`)"
+        )
 
     if workspace is not None:
         prior_art = load_prior_art(workspace)
@@ -424,30 +446,32 @@ def build_stack_markdown(state: dict[str, Any], is_draft: bool | None = None) ->
         )
         lines.append("")
 
-    secondaries = [s for s in (mem.get("secondary_strategies") or []) if s]
-    lines.extend(
-        [
-            "## 2. Memory, State & Agent Communication Architecture",
-            "",
-            f"- **Primary Memory Strategy:** `{mem.get('strategy') or 'Unspecified'}`",
-            f"- **Secondary / Combined Strategies:** {', '.join(f'`{s}`' for s in secondaries) if secondaries else 'None (single-strategy)'}",
-            f"- **Combined Memory Profile:** `{format_memory_strategy_display(mem)}`",
-            f"- **Agent / Component Communication Pattern:** {mem.get('agent_communication_pattern') or '—'}",
-            f"- **Workflow Memory Flow:** {mem.get('workflow_memory_flow') or '—'}",
-            f"- **Why This Strategy (vs. RAG / Vector DB / Alternatives):** {mem.get('rationale') or '—'}",
-            f"- **Alternatives Considered:** {mem.get('alternatives_considered') or '—'}",
-            "",
-        ]
-    )
-    fms = mem.get("failure_modes") or []
-    if fms:
-        lines.append("### Anticipated Memory Failure Modes & Mitigations")
-        lines.append("")
-        for fm in fms:
-            lines.append(f"- ⚠️ {fm}")
-        lines.append("")
+    lines.extend(["## 2. Memory, State & Agent Communication Architecture", ""])
+    lines.extend(format_memory_architecture_lines(mem, failure_heading="### Anticipated Memory Failure Modes & Mitigations"))
 
     return "\n".join(lines)
+
+
+def format_memory_architecture_lines(mem: dict[str, Any], failure_heading: str | None = None) -> list[str]:
+    """Shared Markdown bullets for a Memory Architecture (used by STACK.md and SPEC.md)."""
+    secondaries = [s for s in (mem.get("secondary_strategies") or []) if s]
+    lines = [
+        f"- **Primary Memory Strategy:** `{mem.get('strategy') or 'Unspecified'}`",
+        f"- **Secondary / Combined Strategies:** {', '.join(f'`{s}`' for s in secondaries) if secondaries else 'None (single-strategy)'}",
+        f"- **Combined Memory Profile:** `{format_memory_strategy_display(mem)}`",
+        f"- **Agent / Component Communication Pattern:** {mem.get('agent_communication_pattern') or '—'}",
+        f"- **Workflow Memory Lifecycle:** {mem.get('workflow_memory_flow') or '—'}",
+        f"- **Why This Strategy (vs. RAG / Vector DB / Alternatives):** {mem.get('rationale') or '—'}",
+        f"- **Alternatives Considered:** {mem.get('alternatives_considered') or '—'}",
+        "",
+    ]
+    fms = mem.get("failure_modes") or []
+    if fms:
+        if failure_heading:
+            lines.extend([failure_heading, ""])
+        lines.extend(f"- ⚠️ {fm}" for fm in fms)
+        lines.append("")
+    return lines
 
 
 def save_state(workspace: Path, state: dict[str, Any]) -> Path:
@@ -551,14 +575,8 @@ def validate_dimension_evidence(
             )
         if score == 20:
             combined_text = (clean_summary + " " + " ".join(edge_cases)).lower()
-            repo_tokens: list[str] = []
-            for r in repos:
-                fn = (r.get("full_name") or "").lower()
-                if fn:
-                    repo_tokens.append(fn)
-                    if "/" in fn:
-                        repo_tokens.append(fn.split("/", 1)[1])
-            if not any(tok and tok in combined_text for tok in repo_tokens):
+            repo_names = [(r.get("full_name") or "").lower() for r in repos]
+            if not any(cites_repo(combined_text, fn) for fn in repo_names if "/" in fn):
                 sample_names = ", ".join(r.get("full_name", "") for r in repos[:4])
                 return (
                     "Rejected: score 20/20 on 'differentiation' must explicitly cite at least one "

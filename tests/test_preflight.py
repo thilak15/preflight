@@ -423,7 +423,10 @@ class TestPreFlightPipeline(unittest.TestCase):
         )
 
         st = state.load_state(self.workspace)
-        self.assertTrue(st["readiness_unlocked"])
+        # Gate stays LOCKED until both Mermaid diagrams exist (spec rule #7), so status/export-tickets agree with render_blueprint.py
+        self.assertFalse(st["readiness_unlocked"])
+        self.assertEqual(len(st["missing_gate_requirements"]), 1)
+        self.assertIn("topology_mermaid", st["missing_gate_requirements"][0])
         tools_by_name = {t["recommended"]: t for t in st["tooling_recommendations"]}
         self.assertEqual(tools_by_name["Docker (Dockerfile)"]["proof_status"], "verified")
         self.assertEqual(tools_by_name["Kubernetes Helm"]["proof_status"], "claimed-unverified")
@@ -431,6 +434,14 @@ class TestPreFlightPipeline(unittest.TestCase):
         # render_blueprint.py should STILL fail if set-design hasn't populated Mermaid diagrams
         rc_no_diagrams = render_blueprint.main(["--workspace", str(self.workspace)])
         self.assertEqual(rc_no_diagrams, 2)
+
+        # --force with only diagrams missing must watermark DRAFT (never "PASSED" over placeholder diagrams)
+        rc_force_no_diagrams = render_blueprint.main(["--workspace", str(self.workspace), "--force"])
+        self.assertEqual(rc_force_no_diagrams, 0)
+        self.assertIn("[DRAFT]", (self.workspace / ".preflight" / "SPEC.md").read_text(encoding="utf-8"))
+        self.assertIn("DRAFT BLUEPRINT", (self.workspace / "blueprint_report.html").read_text(encoding="utf-8"))
+        forced_ticket = sorted((self.workspace / ".preflight" / "issues").glob("[0-9][0-9]-*.md"))[0]
+        self.assertIn("**Status:** draft", forced_ticket.read_text(encoding="utf-8"))
 
         # Populate diagrams, trade-offs, and steps (including custom :: BlockedBy edge) via `set-design`
         rc_design = state.main(
@@ -453,6 +464,7 @@ class TestPreFlightPipeline(unittest.TestCase):
             ]
         )
         self.assertEqual(rc_design, 0)
+        self.assertTrue(state.load_state(self.workspace)["readiness_unlocked"])
 
         # Now render_blueprint.py succeeds and writes blueprint_report.html, .preflight/SPEC.md, .preflight/STACK.md, and .preflight/issues/
         rc_render_ok = render_blueprint.main(["--workspace", str(self.workspace)])
@@ -720,6 +732,42 @@ class TestPreFlightPipeline(unittest.TestCase):
         self.assertIn("GitHub Actions", observed_tools)
         self.assertEqual(len(report["pain_points"]), 1)
         self.assertEqual(report["pain_points"][0]["top_comments"][0]["author"], "kernel-dev")
+
+    def test_repo_citation_requires_full_owner_repo_and_config_proof_rejects_mismatched_files(self) -> None:
+        # Differentiation citations must match the full `owner/repo` token, not bare words like "cron"
+        self.assertTrue(state.cites_repo("unlike `hanagantig/cron`, we avoid raft.", "hanagantig/cron"))
+        self.assertTrue(state.cites_repo("solves dagucloud/dagu#1260", "dagucloud/dagu"))
+        self.assertFalse(state.cites_repo("a cron scheduler with an acronym", "hanagantig/cron"))
+        self.assertFalse(state.cites_repo("see xhanagantig/cron", "hanagantig/cron"))
+        self.assertFalse(state.cites_repo("see hanagantig/cronsun", "hanagantig/cron"))
+
+        preflight_dir = self.workspace / ".preflight"
+        preflight_dir.mkdir(parents=True, exist_ok=True)
+        prior_art = {
+            "active_incumbents": [{"full_name": "hanagantig/cron", "detected_configs": []}],
+            "graveyard_repos": [],
+            "observed_stack_configs": [{"tool": "Docker (Dockerfile)", "config_file": "Dockerfile"}],
+        }
+        (preflight_dir / "prior-art.json").write_text(json.dumps(prior_art), encoding="utf-8")
+
+        # A bare repo name in the summary must NOT satisfy the 20/20 differentiation citation rule
+        msg = state.validate_dimension_evidence(
+            self.workspace,
+            "differentiation",
+            20,
+            "A lightweight cron scheduler that avoids distributed consensus entirely for edge nodes.",
+            ["cron jobs run locally without a quorum", "no shared filesystem needed for workers"],
+        )
+        self.assertIsNotNone(msg)
+        self.assertIn("must explicitly cite", msg or "")
+
+        # An explicit config-proof filename that was never observed stays unverified, even if the tool name matches
+        status, _ = state.verify_config_proof(self.workspace, "docker-compose.prod.yml", "Docker (Dockerfile)")
+        self.assertEqual(status, "claimed-unverified")
+        # A proof with no concrete filename may still be verified by tool name
+        status, source = state.verify_config_proof(self.workspace, "multi-stage build", "Docker")
+        self.assertEqual(status, "verified")
+        self.assertEqual(source, "scout:Dockerfile")
 
 
 if __name__ == "__main__":
