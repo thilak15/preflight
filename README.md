@@ -39,18 +39,28 @@ Most AI coding assistants act like eager "yes-men": pitch an idea and they immed
 
 ### 1. Install
 
-Clone the repository and copy the self-contained skill into your agent's skills directory (zero external dependencies — Python 3.10+ standard library only):
+Clone the repository and install the self-contained skill into your agent's skills directory (zero external dependencies — Python 3.10+ standard library only):
 
 ```bash
 git clone https://github.com/thilak15/preflight.git
 cd preflight
 
-# For Gemini / Antigravity:
-cp -R skills/preflight ~/.gemini/config/skills/preflight
+# Option A: Live Symlink (Recommended for local development)
+./scripts/link-skills.sh
 
-# Or for Claude Code:
+# Option B: Portable Copy (Fallback for machines without symlink support)
 cp -R skills/preflight ~/.claude/skills/preflight
+cp -R skills/preflight ~/.agents/skills/preflight
+cp -R skills/preflight ~/.gemini/config/skills/preflight
 ```
+
+#### Updating & Uninstalling
+- **Update (Live Symlink):** Run `git pull` in your `preflight` checkout. The installed skill points directly into your clone, so prompt, doc, and script changes take effect immediately without re-copying.
+- **Update (Copied):** Re-run the `cp -R` commands after pulling.
+- **Uninstall:** Remove the symlinks or copied skill directories:
+  ```bash
+  rm -rf ~/.claude/skills/preflight ~/.agents/skills/preflight ~/.gemini/config/skills/preflight
+  ```
 
 > **Tip:** Authenticate [GitHub CLI](https://cli.github.com/) (`gh auth login`) or set `GITHUB_TOKEN` for the `30 req/min` GitHub Search API quota (automatically falls back to `10 req/min` unauthenticated).
 

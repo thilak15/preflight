@@ -4,6 +4,9 @@ All notable changes to **PreFlight** are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Live-Link Skill Installer (`scripts/link-skills.sh`)**: Dev-only script to link `skills/preflight` directly into `~/.claude/skills`, `~/.agents/skills`, and `~/.gemini/config/skills` so that `git pull` automatically updates installed agent skills without re-copying. Includes safety guards against silent overwrite of real folders (`--force` required) and against symlinks pointing into the repository.
+
 ### Fixed
 - **Readiness Gate includes diagrams (`state.py evaluate_gate`)**: Missing `topology_mermaid` / `sequence_mermaid` now keeps the gate locked, so `state.py status`, `export-tickets`, and `render_blueprint.py` agree, and `render_blueprint.py --force` always watermarks placeholder diagrams as `DRAFT`.
 - **Differentiation citations (`state.py cites_repo`)**: A `20/20` differentiation score now requires a whole-token `owner/repo` citation; bare repo names like `cron` no longer pass by matching ordinary words.

@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -768,6 +769,55 @@ class TestPreFlightPipeline(unittest.TestCase):
         status, source = state.verify_config_proof(self.workspace, "multi-stage build", "Docker")
         self.assertEqual(status, "verified")
         self.assertEqual(source, "scout:Dockerfile")
+
+    def test_link_skills_script(self) -> None:
+        repo_root = Path(__file__).resolve().parent.parent
+        script = repo_root / "scripts" / "link-skills.sh"
+        self.assertTrue(script.exists())
+
+        dest1 = self.workspace / "claude_skills"
+        dest2 = self.workspace / "agents_skills"
+
+        # 1. Successful linking into custom destinations
+        res = subprocess.run([str(script), str(dest1), str(dest2)], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("linked preflight ->", res.stdout)
+        target1 = dest1 / "preflight"
+        target2 = dest2 / "preflight"
+        self.assertTrue(target1.is_symlink())
+        self.assertTrue(target2.is_symlink())
+        expected_src = (repo_root / "skills" / "preflight").resolve()
+        self.assertEqual(target1.resolve(), expected_src)
+        self.assertEqual(target2.resolve(), expected_src)
+
+        # 2. Idempotency (running twice produces identical output)
+        res_repeat = subprocess.run([str(script), str(dest1), str(dest2)], capture_output=True, text=True)
+        self.assertEqual(res_repeat.returncode, 0)
+        self.assertEqual(res_repeat.stdout, res.stdout)
+
+        # 3. Existing real directory at target refuses without --force
+        dest_real = self.workspace / "real_skills"
+        real_target = dest_real / "preflight"
+        real_target.mkdir(parents=True, exist_ok=True)
+        (real_target / "existing.txt").write_text("pre-existing content", encoding="utf-8")
+
+        res_refuse = subprocess.run([str(script), str(dest_real)], capture_output=True, text=True)
+        self.assertNotEqual(res_refuse.returncode, 0)
+        self.assertIn("Refusing to overwrite without --force", res_refuse.stderr)
+        self.assertFalse(real_target.is_symlink())
+
+        # 4. Existing real directory replaced with --force
+        res_forced = subprocess.run([str(script), "--force", str(dest_real)], capture_output=True, text=True)
+        self.assertEqual(res_forced.returncode, 0, res_forced.stderr)
+        self.assertTrue(real_target.is_symlink())
+        self.assertEqual(real_target.resolve(), expected_src)
+
+        # 5. Guard: destination symlink into repo exits 1 with error
+        bad_dest = self.workspace / "symlink_into_repo"
+        bad_dest.symlink_to(repo_root / "skills")
+        res_guard = subprocess.run([str(script), str(bad_dest)], capture_output=True, text=True)
+        self.assertNotEqual(res_guard.returncode, 0)
+        self.assertIn("is a symlink into this repo", res_guard.stderr)
 
 
 if __name__ == "__main__":
