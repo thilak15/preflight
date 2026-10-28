@@ -4,9 +4,9 @@ __pycache__/
 *$py.class
 .pytest_cache/
 
-# Local SQLite Repo Cache & scratch tickets
-.preflight/cache.db
-.preflight/cache.db-*
+# Local PreFlight runtime state & outputs in working directories
+.preflight/
+blueprint_report.html
 .scratch/
 
 # OS & Editor files

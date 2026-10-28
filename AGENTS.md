@@ -1,15 +1,8 @@
-# PreFlight Workspace
+# PreFlight Repository Rules
 
-## Agent skills
+## Architecture & Coding Standards
 
-### Issue tracker
-
-Issues and specs are tracked as local markdown files under `.scratch/<feature-slug>/`. See `docs/agents/issue-tracker.md`.
-
-### Triage labels
-
-Uses the five default canonical triage labels (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-Single-context layout (`GLOSSARY.md` at the repo root and ADRs in `docs/adr/`). See `docs/agents/domain.md`.
+- **Zero External Dependencies:** All scripts under `skills/preflight/scripts/` must use the Python 3.10+ standard library only (`sqlite3`, `urllib`, `json`, `argparse`, `html`, `unittest`).
+- **Evidence-Based Readiness Gate:** `state.py` must programmatically verify evidence before allowing `20/20` dimension scores or unlocking `render_blueprint.py`. Never bypass validation rules in production code paths.
+- **Self-Contained Repository:** Do not add references to external skill repositories or uncommitted local paths. Keep `GLOSSARY.md` and `docs/adr/` accurate and up to date.
+- **Testing:** Run `python3 -m unittest discover -s tests -v` before committing any change to `skills/preflight/scripts/`.

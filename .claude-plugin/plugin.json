@@ -1,0 +1,14 @@
+{
+  "name": "preflight",
+  "version": "0.2.0",
+  "description": "Pre-implementation architecture validator, GitHub prior-art & issue pain-point scout, and HTML/Mermaid.js + Markdown specification generator.",
+  "author": {
+    "name": "Thilak Daggula",
+    "url": "https://github.com/thilak15"
+  },
+  "repository": "https://github.com/thilak15/preflight",
+  "license": "MIT",
+  "skills": [
+    "./skills/preflight"
+  ]
+}

@@ -26,54 +26,63 @@ class TestPreFlightPipeline(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def test_state_and_readiness_gate_lifecycle(self) -> None:
-        rc = state.main(
+    def test_evidence_gates_block_shallow_self_certification(self) -> None:
+        state.main(
             [
                 "--workspace",
                 str(self.workspace),
                 "init",
                 "--name",
-                "TestApp",
+                "EdgeScheduler",
                 "--summary",
-                "Test summary",
+                "Single-binary job scheduler for edge Linux nodes",
                 "--runtime",
-                "Python 3.11",
+                "Rust 1.80",
                 "--stack",
-                "SQLite,Mermaid",
+                "Rust,SQLite,gRPC",
             ]
         )
-        self.assertEqual(rc, 0)
-        st = state.load_state(self.workspace)
-        self.assertEqual(st["readiness_score"], 0)
-        self.assertFalse(st["readiness_unlocked"])
 
-        # Gate should block rendering when < 80%
-        rc_render = render_blueprint.main(["--workspace", str(self.workspace)])
-        self.assertEqual(rc_render, 2)
+        # 1. Attempting score=20 with a short 2-word summary ("Locked problem") MUST fail
+        rc_short = state.main(
+            [
+                "--workspace",
+                str(self.workspace),
+                "update-dimension",
+                "--dimension",
+                "problem",
+                "--score",
+                "20",
+                "--summary",
+                "Locked problem",
+                "--edge-case",
+                "Edge case 1",
+                "--edge-case",
+                "Edge case 2",
+            ]
+        )
+        self.assertEqual(rc_short, 2)
 
-        # Score 4 dimensions to 20 = 80%, but 1 dimension is still 0 -> should remain locked
-        for dim in ("problem", "scope", "memory", "bottlenecks"):
-            state.main(
-                [
-                    "--workspace",
-                    str(self.workspace),
-                    "update-dimension",
-                    "--dimension",
-                    dim,
-                    "--score",
-                    "20",
-                    "--summary",
-                    f"Locked {dim}",
-                    "--edge-case",
-                    f"Edge case for {dim}",
-                ]
-            )
-        st = state.load_state(self.workspace)
-        self.assertEqual(st["readiness_score"], 80)
-        self.assertFalse(st["readiness_unlocked"])  # differentiation is still 0
+        # 2. Attempting score=20 with < 2 edge cases MUST fail
+        rc_no_ec = state.main(
+            [
+                "--workspace",
+                str(self.workspace),
+                "update-dimension",
+                "--dimension",
+                "problem",
+                "--score",
+                "20",
+                "--summary",
+                "Replaces heavy Python Airflow deployments on resource-constrained edge nodes with a 15MB binary.",
+                "--edge-case",
+                "Only one edge case provided",
+            ]
+        )
+        self.assertEqual(rc_no_ec, 2)
 
-        # Score differentiation to 10 -> total 90%, no 0% dimensions -> UNLOCKED
-        state.main(
+        # 3. Attempting to score differentiation > 0 before running scout.py (.preflight/prior-art.json missing) MUST fail
+        rc_no_scout = state.main(
             [
                 "--workspace",
                 str(self.workspace),
@@ -83,120 +92,307 @@ class TestPreFlightPipeline(unittest.TestCase):
                 "--score",
                 "10",
                 "--summary",
-                "Contrasted against incumbents",
+                "Unlike existing schedulers, runs as a single static binary with embedded SQLite.",
             ]
         )
-        st = state.load_state(self.workspace)
-        self.assertEqual(st["readiness_score"], 90)
-        self.assertTrue(st["readiness_unlocked"])
+        self.assertEqual(rc_no_scout, 2)
 
-        # Record ADR and Critique
+    def test_full_evidence_verified_lifecycle_and_spec_export(self) -> None:
+        state.main(
+            [
+                "--workspace",
+                str(self.workspace),
+                "init",
+                "--name",
+                "EdgeCron",
+                "--summary",
+                "Deterministic DAG runner for disconnected edge gateways",
+                "--runtime",
+                "Go 1.23",
+                "--stack",
+                "Go,SQLite WAL,mTLS",
+            ]
+        )
+
+        # Write a realistic prior-art.json as produced by scout.py
+        prior_art = {
+            "scouted_at": "2026-10-27T20:00:00+00:00",
+            "auth_source": "gh-cli",
+            "rate_limit": {"search_api_quota": "30 req/min", "remaining": 28, "limit": 30},
+            "queries": ["dag scheduler single binary", "dagu workflow"],
+            "active_incumbents": [
+                {
+                    "full_name": "dagu-org/dagu",
+                    "html_url": "https://github.com/dagu-org/dagu",
+                    "description": "Cron alternative with a Web UI and DAG runner in a single binary",
+                    "stars": 6500,
+                    "forks": 380,
+                    "open_issues_count": 45,
+                    "language": "Go",
+                    "topics": ["workflow", "dag", "scheduler"],
+                    "created_at": "2022-05-01T00:00:00Z",
+                    "pushed_at": "2026-10-20T00:00:00Z",
+                    "archived": False,
+                    "inactive_days": 7,
+                    "star_velocity_per_month": 120.4,
+                    "classification": "active_incumbent",
+                    "graveyard_reason": "",
+                }
+            ],
+            "graveyard_repos": [
+                {
+                    "full_name": "old-org/dead-cron",
+                    "html_url": "https://github.com/old-org/dead-cron",
+                    "description": "Distributed cron over etcd",
+                    "stars": 410,
+                    "forks": 32,
+                    "open_issues_count": 19,
+                    "language": "Go",
+                    "topics": [],
+                    "created_at": "2019-01-01T00:00:00Z",
+                    "pushed_at": "2023-01-01T00:00:00Z",
+                    "archived": True,
+                    "inactive_days": 1395,
+                    "star_velocity_per_month": 4.3,
+                    "classification": "graveyard",
+                    "graveyard_reason": "Explicitly archived by maintainer",
+                }
+            ],
+            "pain_points": [
+                {
+                    "repo_full_name": "dagu-org/dagu",
+                    "issue_number": 412,
+                    "title": "Zombie child processes survive when parent daemon receives SIGKILL",
+                    "issue_url": "https://github.com/dagu-org/dagu/issues/412",
+                    "category": "bug_or_failure",
+                    "labels": ["bug"],
+                    "reactions_plus_one": 14,
+                    "reactions_total": 16,
+                    "comments_count": 6,
+                    "body_excerpt": "When the worker crashes, spawned bash subshells continue running in the background.",
+                    "top_comments": [
+                        {
+                            "author": "ops-lead",
+                            "reactions": 8,
+                            "excerpt": "We had to wrap every step in Linux cgroups v2 or set PR_SET_PDEATHSIG so orphans get reaped.",
+                        }
+                    ],
+                    "created_at": "2026-04-10T00:00:00Z",
+                }
+            ],
+            "warnings": [],
+        }
+        (self.workspace / ".preflight" / "prior-art.json").write_text(
+            json.dumps(prior_art, indent=2), encoding="utf-8"
+        )
+
+        # Score the first 4 dimensions with real summaries and >=2 edge cases
+        for dim in ("problem", "scope", "memory", "bottlenecks"):
+            rc = state.main(
+                [
+                    "--workspace",
+                    str(self.workspace),
+                    "update-dimension",
+                    "--dimension",
+                    dim,
+                    "--score",
+                    "20",
+                    "--summary",
+                    f"Substantive architectural specification for {dim} with validated failure boundaries.",
+                    "--edge-case",
+                    f"{dim} edge case 1: network partition during execution",
+                    "--edge-case",
+                    f"{dim} edge case 2: power loss mid-transaction",
+                ]
+            )
+            self.assertEqual(rc, 0)
+
+        # Differentiation score=20 WITHOUT citing any repo in prior-art.json MUST fail
+        rc_uncited = state.main(
+            [
+                "--workspace",
+                str(self.workspace),
+                "update-dimension",
+                "--dimension",
+                "differentiation",
+                "--score",
+                "20",
+                "--summary",
+                "Our scheduler is much faster and cleaner than generic competitors in the market.",
+                "--edge-case",
+                "Edge case A",
+                "--edge-case",
+                "Edge case B",
+            ]
+        )
+        self.assertEqual(rc_uncited, 2)
+
+        # Differentiation score=20 citing `dagu-org/dagu` and `old-org/dead-cron` succeeds
+        rc_cited = state.main(
+            [
+                "--workspace",
+                str(self.workspace),
+                "update-dimension",
+                "--dimension",
+                "differentiation",
+                "--score",
+                "20",
+                "--summary",
+                "Unlike dagu-org/dagu (#412 orphan process leak), EdgeCron isolates every step in a cgroup v2 scope and avoids the etcd dependency that killed old-org/dead-cron.",
+                "--edge-case",
+                "Orphaned subprocess cleanup on SIGKILL via cgroup.kill (solves dagu-org/dagu#412)",
+                "--edge-case",
+                "Zero external coordination store required unlike old-org/dead-cron",
+            ]
+        )
+        self.assertEqual(rc_cited, 0)
+
+        # Even at 100% dimension score, gate is STILL locked until >=1 ADR and >=1 Critique exist
+        st = state.load_state(self.workspace)
+        self.assertEqual(st["readiness_score"], 100)
+        self.assertFalse(st["readiness_unlocked"])
+
+        # Add ADR and Critique
         state.main(
             [
                 "--workspace",
                 str(self.workspace),
                 "add-decision",
                 "--title",
-                "Use SQLite Cache",
+                "Linux cgroups v2 Step Isolation",
                 "--decision",
-                "Store repo cache in SQLite",
+                "Place each DAG step in an ephemeral systemd/cgroup v2 scope.",
                 "--rejected",
-                "Redis",
+                "Plain os/exec process groups",
                 "--rationale",
-                "Zero external dependencies",
+                "Prevents double-forked orphan processes (dagu-org/dagu#412).",
                 "--dimension",
-                "memory",
+                "bottlenecks",
             ]
         )
-        adr_files = list((self.workspace / "docs" / "adr").glob("*.md"))
-        self.assertEqual(len(adr_files), 1)
-
         state.main(
             [
                 "--workspace",
                 str(self.workspace),
                 "add-critique",
                 "--title",
-                "GitHub Rate Limit Exhaustion",
+                "SQLite WAL Lock Contention Under High Concurrency",
                 "--severity",
-                "critical",
+                "high",
                 "--attack",
-                "60 req/hr unauthenticated limit hit during multi-query scout",
+                "50+ concurrent step heartbeats cause SQLITE_BUSY errors",
                 "--mitigation",
-                "Use gh auth token + 7-day SQLite cache",
+                "Single writer goroutine batching state transitions every 100ms",
             ]
         )
 
-        # Render blueprint now succeeds
+        st = state.load_state(self.workspace)
+        self.assertTrue(st["readiness_unlocked"])
+
+        # render_blueprint.py should STILL fail if set-design hasn't populated Mermaid diagrams
+        rc_no_diagrams = render_blueprint.main(["--workspace", str(self.workspace)])
+        self.assertEqual(rc_no_diagrams, 2)
+
+        # Populate diagrams, trade-offs, and steps via `set-design`
+        rc_design = state.main(
+            [
+                "--workspace",
+                str(self.workspace),
+                "set-design",
+                "--topology",
+                "flowchart LR\n    CLI --> Daemon --> SQLite[(SQLite WAL)]",
+                "--sequence",
+                "sequenceDiagram\n    CLI->>Daemon: Trigger DAG\n    Daemon->>SQLite: Batch commit",
+                "--option",
+                "SQLite Single-Writer|Zero ops, single file|Single node only|Selected (ADR-0001)",
+                "--option",
+                "etcd Cluster|Multi-node HA|High operational overhead on edge|Rejected",
+                "--step",
+                "Implement SQLite WAL state machine and single-writer batch loop",
+                "--step",
+                "Implement cgroup v2 process runner with orphan reaping",
+            ]
+        )
+        self.assertEqual(rc_design, 0)
+
+        # Now render_blueprint.py succeeds and writes both blueprint_report.html and .preflight/SPEC.md
         rc_render_ok = render_blueprint.main(["--workspace", str(self.workspace)])
         self.assertEqual(rc_render_ok, 0)
-        html_file = self.workspace / "blueprint_report.html"
-        self.assertTrue(html_file.exists())
-        content = html_file.read_text(encoding="utf-8")
-        self.assertIn("TestApp", content)
-        self.assertIn("90%", content)
-        self.assertIn("Use SQLite Cache", content)
-        self.assertIn("GitHub Rate Limit Exhaustion", content)
 
-    def test_scout_classification_and_sqlite_cache(self) -> None:
-        ref_dt = datetime(2026, 10, 27, tzinfo=timezone.utc)
-        active_raw = {
-            "full_name": "org/active-tool",
-            "html_url": "https://github.com/org/active-tool",
-            "description": "An active repo",
-            "stargazers_count": 1200,
-            "forks_count": 80,
-            "open_issues_count": 15,
-            "language": "Python",
-            "topics": ["agent", "architecture"],
-            "created_at": "2025-10-27T00:00:00Z",
-            "pushed_at": "2026-10-15T00:00:00Z",
-            "archived": False,
+        html_path = self.workspace / "blueprint_report.html"
+        spec_path = self.workspace / ".preflight" / "SPEC.md"
+        self.assertTrue(html_path.exists())
+        self.assertTrue(spec_path.exists())
+
+        html_text = html_path.read_text(encoding="utf-8")
+        spec_text = spec_path.read_text(encoding="utf-8")
+        self.assertIn("dagu-org/dagu#412", html_text)
+        self.assertIn("@ops-lead", html_text)
+        self.assertIn("Copy Spec Markdown", html_text)
+        self.assertIn("## 5. System Architecture Diagrams", spec_text)
+        self.assertIn("Linux cgroups v2 Step Isolation", spec_text)
+
+    def test_scout_heuristics_preserve_markdown_skills_and_filter_zero_vote_issues(self) -> None:
+        # Markdown-only skill repo (language=None, small size, but has stars and description) MUST NOT be filtered out
+        md_skill_repo = {
+            "full_name": "author/agent-skill-pack",
+            "description": "A collection of markdown agent skills",
+            "stargazers_count": 25,
+            "forks_count": 4,
+            "has_issues": True,
+            "language": None,
+            "size": 4,
         }
-        graveyard_raw = {
-            "full_name": "org/dead-tool",
-            "html_url": "https://github.com/org/dead-tool",
-            "description": "An abandoned repo",
-            "stargazers_count": 450,
-            "forks_count": 20,
-            "open_issues_count": 42,
-            "language": "TypeScript",
-            "topics": [],
-            "created_at": "2022-01-01T00:00:00Z",
-            "pushed_at": "2024-01-01T00:00:00Z",
-            "archived": False,
-        }
+        self.assertFalse(scout.is_noise_repo(md_skill_repo))
 
-        c_active = scout.classify_repo(active_raw, ref_dt=ref_dt)
-        self.assertEqual(c_active["classification"], "active_incumbent")
-        self.assertEqual(c_active["inactive_days"], 12)
-
-        c_grave = scout.classify_repo(graveyard_raw, ref_dt=ref_dt)
-        self.assertEqual(c_grave["classification"], "graveyard")
-        self.assertGreater(c_grave["inactive_days"], 365)
-
-        cache = scout.RepoCache(self.workspace / ".preflight" / "cache.db")
-        try:
-            cache.set_cached("test_url", {"items": [1, 2, 3]})
-            self.assertEqual(cache.get_cached("test_url"), {"items": [1, 2, 3]})
-            cache.upsert_repo(c_active)
-            cache.upsert_repo(c_grave)
-            pp = scout.extract_pain_point(
-                "org/active-tool",
-                {
-                    "number": 99,
-                    "title": "Hangs on large repos",
-                    "html_url": "https://github.com/org/active-tool/issues/99",
-                    "reactions": {"+1": 42, "total_count": 50},
-                    "comments": 18,
-                    "body": "Whenever I run this on a monorepo it times out after 60s.",
-                    "created_at": "2026-08-01T00:00:00Z",
-                },
+        # Org profile repo (.github) or 0-star/0-fork empty repo MUST be filtered out
+        self.assertTrue(
+            scout.is_noise_repo(
+                {"full_name": "some-org/.github", "stargazers_count": 500, "forks_count": 10}
             )
-            cache.upsert_pain_point(pp)
-            self.assertEqual(pp["reactions_plus_one"], 42)
-        finally:
-            cache.close()
+        )
+        self.assertTrue(
+            scout.is_noise_repo(
+                {"full_name": "user/empty-repo", "stargazers_count": 0, "forks_count": 0}
+            )
+        )
+
+        # 0-vote, 0-comment issue MUST NOT qualify as a substantive pain point
+        zero_vote_issue = {
+            "number": 10,
+            "title": "Random unvalidated suggestion",
+            "reactions": {"+1": 0, "total_count": 0},
+            "comments": 0,
+        }
+        self.assertFalse(scout.is_substantive_pain_point(zero_vote_issue))
+
+        # Issue with reactions or comments DOES qualify
+        valid_issue = {
+            "number": 11,
+            "title": "Crash when config path has spaces",
+            "reactions": {"+1": 3, "total_count": 3},
+            "comments": 1,
+        }
+        self.assertTrue(scout.is_substantive_pain_point(valid_issue))
+
+        # Top comment extraction sorts by reaction score and strips ultra-short "+1" noise comments
+        comments = [
+            {"user": {"login": "spammer"}, "body": "+1", "reactions": {"+1": 10, "total_count": 10}},
+            {
+                "user": {"login": "dev1"},
+                "body": "This happens because path quoting is missing in the subshell exec call.",
+                "reactions": {"+1": 5, "total_count": 6},
+            },
+            {
+                "user": {"login": "dev2"},
+                "body": "Confirmed on macOS 15 as well; workaround is using a symlink without spaces.",
+                "reactions": {"+1": 2, "total_count": 2},
+            },
+        ]
+        top = scout.extract_top_comments(comments, max_comments=2)
+        self.assertEqual(len(top), 2)
+        self.assertEqual(top[0]["author"], "dev1")
+        self.assertEqual(top[1]["author"], "dev2")
 
 
 if __name__ == "__main__":

@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
 """
-PreFlight Aesthetic Blueprint Generator (`scripts/render_blueprint.py`).
+PreFlight Blueprint & Specification Generator (`scripts/render_blueprint.py`).
 
 Reads:
 - `.preflight/state.json` (Working State, 5-dimension Readiness Scorecard, Red-Team Critiques, System Design)
 - `.preflight/decisions.json` (Decision Ledger / ADRs)
-- `.preflight/prior-art.json` (Active Incumbents, Graveyard Repos, Mined Pain Points)
+- `.preflight/prior-art.json` (Active Incumbents, Graveyard/Dormant Repos, Verified Pain Points + Top Comments)
 
-Enforces the Readiness Gate (>=80% and no 0% dimensions, unless `--force` or `forced_unlock=True`)
-and renders a standalone, dark-mode `blueprint_report.html` dashboard with interactive Mermaid.js diagrams.
+Enforces:
+1. Evidence-based Readiness Gate (`evaluate_gate`: score >= 80%, no 0% dimensions, `prior-art.json` present,
+   >= 1 ADR, >= 1 Red-Team Critique).
+2. Explicit `topology_mermaid` and `sequence_mermaid` in `system_design` (rejects missing diagrams so
+   placeholder diagrams are never shipped behind a "PASSED" badge).
+
+Outputs:
+- `blueprint_report.html`: Dark-mode interactive HTML dashboard with Mermaid.js diagrams, offline raw source
+  fallback, and a 1-click "Copy Spec Markdown" button.
+- `.preflight/SPEC.md` (or `--spec-output`): Clean Markdown specification document ready for implementation.
 """
 
 from __future__ import annotations
@@ -20,7 +28,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from state import DIMENSIONS, DIMENSION_LABELS, compute_readiness, load_decisions, load_state
+from state import DIMENSIONS, DIMENSION_LABELS, evaluate_gate, load_decisions, load_state
 
 
 def esc(val: Any) -> str:
@@ -34,51 +42,168 @@ def load_prior_art(workspace: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def default_topology_mermaid(project_name: str) -> str:
-    return f"""flowchart TD
-    User(["Developer / User"]) --> Entry["{project_name} Interface"]
-    Entry --> Core["Core Orchestration Engine"]
-    Core --> State[("Working State & Decision Ledger")]
-    Core --> Scout["Prior-Art & Pain-Point Scout"]
-    Scout --> Cache[("SQLite Repo Cache")]
-    Core --> Blueprint["Blueprint Renderer"]
-"""
+def build_spec_markdown(
+    state: dict[str, Any],
+    decisions: list[dict[str, Any]],
+    prior_art: dict[str, Any],
+) -> str:
+    project_name = state.get("project_name") or "Untitled Project"
+    project_summary = state.get("project_summary") or "No project summary provided."
+    runtime = state.get("target_runtime") or "Unspecified Runtime"
+    stack = ", ".join(state.get("tech_stack") or []) or "Unspecified"
+    readiness_score = int(state.get("readiness_score", 0))
 
+    lines = [
+        f"# System Design Specification: {project_name}",
+        "",
+        f"- **Readiness Score:** {readiness_score}% (Evidence-Verified)",
+        f"- **Target Runtime:** {runtime}",
+        f"- **Tech Stack:** {stack}",
+        "",
+        "## 1. Executive Summary",
+        "",
+        project_summary,
+        "",
+        "## 2. Architectural Dimensions & Stress-Tested Edge Cases",
+        "",
+    ]
 
-def default_sequence_mermaid(project_name: str) -> str:
-    return f"""sequenceDiagram
-    actor Dev as Developer
-    participant PF as {project_name}
-    participant Scout as GitHub Deep-Scout
-    participant Ledger as Decision Ledger
-    Dev->>PF: Pitch initial idea
-    PF->>Dev: Round 1 Socratic Grilling
-    Dev->>PF: Round 1 Answers
-    par Async Prior-Art Scouting
-        PF->>Scout: Execute targeted repo & issue queries
-        Scout-->>PF: Active Incumbents, Graveyard Repos, Pain Points
-    and Round 2+ Grilling
-        PF->>Dev: Challenge with Mined Pain Points & Edge Cases
-        Dev->>Ledger: Lock ADRs & Rejected Options
-    end
-    Ledger->>PF: Readiness Gate >= 80% Unlocked
-    PF-->>Dev: Render standalone blueprint_report.html
-"""
+    for dim in DIMENSIONS:
+        d = state.get("dimensions", {}).get(dim, {})
+        label = d.get("label") or DIMENSION_LABELS[dim]
+        score = int(d.get("score", 0))
+        summary = d.get("summary") or "—"
+        lines.append(f"### {label} (`{dim}` — {score}/20)")
+        lines.append(summary)
+        edge_cases = d.get("edge_cases") or []
+        if edge_cases:
+            lines.append("")
+            lines.append("**Stress-Tested Edge Cases:**")
+            for ec in edge_cases:
+                lines.append(f"- {ec}")
+        lines.append("")
+
+    lines.append("## 3. Adversarial Red-Team Critiques & Mitigations")
+    lines.append("")
+    critiques = state.get("red_team_critiques") or []
+    for c in critiques:
+        lines.append(f"### [{(c.get('severity') or 'high').upper()}] {c.get('title')}")
+        lines.append(f"- **Failure Mode / Attack Vector:** {c.get('attack')}")
+        lines.append(f"- **Architectural Mitigation:** {c.get('mitigation')}")
+        lines.append("")
+
+    lines.append("## 4. GitHub Prior-Art & Mined Pain Points")
+    lines.append("")
+    incumbents = prior_art.get("active_incumbents") or []
+    graveyard = prior_art.get("graveyard_repos") or []
+    if incumbents or graveyard:
+        lines.append("| Repository | Stars | Velocity | Last Push | Status | Summary |")
+        lines.append("| :--- | :---: | :---: | :---: | :---: | :--- |")
+        for r in incumbents[:8]:
+            desc = (r.get("description") or "—").replace("|", "\\|")
+            lines.append(
+                f"| [{r['full_name']}]({r['html_url']}) | ⭐ {r['stars']} | {r['star_velocity_per_month']}/mo | {r['inactive_days']}d ago | Active Incumbent | {desc} |"
+            )
+        for r in graveyard[:6]:
+            desc = (r.get("description") or "—").replace("|", "\\|")
+            lines.append(
+                f"| [{r['full_name']}]({r['html_url']}) | ⭐ {r['stars']} | {r['star_velocity_per_month']}/mo | {r['inactive_days']}d ago | {r.get('graveyard_reason') or 'Dormant'} | {desc} |"
+            )
+        lines.append("")
+
+    pain_points = prior_art.get("pain_points") or []
+    if pain_points:
+        lines.append("### Verified User Pain Points from Open Issues")
+        lines.append("")
+        for p in pain_points[:10]:
+            cat = "BUG/FAILURE" if p.get("category") == "bug_or_failure" else "TOP-VOTED"
+            lines.append(
+                f"- **[{cat}] [{p['repo_full_name']}#{p['issue_number']}]({p['issue_url']}) — {p['title']}** "
+                f"(👍 {p['reactions_plus_one']} | 💬 {p['comments_count']})"
+            )
+            if p.get("body_excerpt"):
+                lines.append(f"  > {p['body_excerpt']}")
+            for tc in p.get("top_comments") or []:
+                lines.append(f"  > 💬 **@{tc['author']}** (👍 {tc['reactions']}): {tc['excerpt']}")
+        lines.append("")
+
+    sys_design = state.get("system_design") or {}
+    topology_mermaid = (sys_design.get("topology_mermaid") or "").strip()
+    sequence_mermaid = (sys_design.get("sequence_mermaid") or "").strip()
+
+    lines.extend(
+        [
+            "## 5. System Architecture Diagrams",
+            "",
+            "### System Topology",
+            "",
+            "```mermaid",
+            topology_mermaid,
+            "```",
+            "",
+            "### Request / Execution Lifecycle",
+            "",
+            "```mermaid",
+            sequence_mermaid,
+            "```",
+            "",
+        ]
+    )
+
+    options_matrix = sys_design.get("options_matrix") or []
+    if options_matrix:
+        lines.extend(
+            [
+                "### Architecture Trade-Off Matrix",
+                "",
+                "| Option | Pros | Cons | Verdict |",
+                "| :--- | :--- | :--- | :--- |",
+            ]
+        )
+        for o in options_matrix:
+            lines.append(
+                f"| **{o.get('option')}** | {o.get('pros')} | {o.get('cons')} | {o.get('verdict')} |"
+            )
+        lines.append("")
+
+    lines.append("## 6. Decision Ledger (ADRs)")
+    lines.append("")
+    for adr in decisions:
+        lines.append(f"### {adr.get('id')}: {adr.get('title')}")
+        lines.append(f"- **Decision:** {adr.get('decision')}")
+        if adr.get("rationale"):
+            lines.append(f"- **Rationale:** {adr.get('rationale')}")
+        if adr.get("rejected"):
+            lines.append(f"- **Rejected Alternatives:** {adr.get('rejected')}")
+        lines.append("")
+
+    impl_steps = sys_design.get("implementation_steps") or []
+    if impl_steps:
+        lines.append("## 7. Implementation Plan")
+        lines.append("")
+        for idx, step in enumerate(impl_steps, start=1):
+            clean_step = step.lstrip("0123456789. ").strip()
+            lines.append(f"{idx}. {clean_step}")
+        lines.append("")
+
+    return "\n".join(lines)
 
 
 def build_html(
     state: dict[str, Any],
     decisions: list[dict[str, Any]],
     prior_art: dict[str, Any],
+    spec_markdown: str,
 ) -> str:
     project_name = esc(state.get("project_name") or "Untitled Project")
     project_summary = esc(state.get("project_summary") or "No project summary provided.")
     runtime = esc(state.get("target_runtime") or "Unspecified Runtime")
     stack_items = state.get("tech_stack") or []
-    readiness_score, unlocked = compute_readiness(state)
+    readiness_score = int(state.get("readiness_score", 0))
+    unlocked = bool(state.get("readiness_unlocked", False))
 
     gate_badge_color = "#10b981" if unlocked else "#f59e0b"
-    gate_badge_text = "READINESS GATE PASSED" if unlocked else "FORCED OVERRIDE / DRAFT"
+    gate_badge_text = "READINESS GATE PASSED" if unlocked else "DRAFT / OVERRIDE"
 
     # 1. Dimension Cards
     dim_cards_html = []
@@ -86,7 +211,7 @@ def build_html(
         d = state.get("dimensions", {}).get(dim, {})
         label = esc(d.get("label") or DIMENSION_LABELS[dim])
         score = int(d.get("score", 0))
-        pct = score * 5  # out of 100% for bar width
+        pct = score * 5
         status = esc(d.get("status", "untouched"))
         summary = esc(d.get("summary") or "Not yet evaluated.")
         edge_cases = d.get("edge_cases") or []
@@ -132,7 +257,7 @@ def build_html(
             )
         critiques_html = "".join(crit_rows)
     else:
-        critiques_html = '<div class="card"><p class="muted">No red-team critiques recorded yet.</p></div>'
+        critiques_html = '<div class="card"><p class="muted">No red-team critiques recorded.</p></div>'
 
     # 3. Prior-Art Matrix & Pain-Point Mine
     incumbents = prior_art.get("active_incumbents") or []
@@ -161,39 +286,54 @@ def build_html(
                 <td>⭐ {int(r.get('stars', 0)):,}</td>
                 <td>{esc(r.get('star_velocity_per_month'))}/mo</td>
                 <td>{int(r.get('inactive_days', 0))}d ago</td>
-                <td><span class="badge badge-red">Graveyard ({esc(r.get('graveyard_reason') or '>365d inactive')})</span></td>
+                <td><span class="badge badge-red">{esc(r.get('graveyard_reason') or 'Dormant >365d')}</span></td>
                 <td>{esc(r.get('description'))}</td>
             </tr>
             """
         )
-    prior_art_table_body = "".join(inc_rows) or '<tr><td colspan="6" class="muted">No repositories scouted yet.</td></tr>'
+    prior_art_table_body = "".join(inc_rows) or '<tr><td colspan="6" class="muted">No repositories scouted.</td></tr>'
 
     pp_cards = []
     for p in pain_points[:12]:
+        cat = p.get("category") or "top_voted"
+        cat_badge = (
+            '<span class="badge badge-red">BUG / FAILURE</span>'
+            if cat == "bug_or_failure"
+            else '<span class="badge badge-blue">TOP-VOTED</span>'
+        )
+        top_comments = p.get("top_comments") or []
+        comments_html = ""
+        if top_comments:
+            c_items = "".join(
+                f'<div class="comment-quote"><strong>@{esc(tc.get("author"))}</strong> (👍 {int(tc.get("reactions", 0))}): {esc(tc.get("excerpt"))}</div>'
+                for tc in top_comments
+            )
+            comments_html = f'<div class="comments-box">{c_items}</div>'
+
         pp_cards.append(
             f"""
             <div class="card pp-card">
                 <div class="pp-header">
-                    <a href="{esc(p.get('issue_url'))}" target="_blank" rel="noopener" class="pp-link">
-                        {esc(p.get('repo_full_name'))}#{int(p.get('issue_number', 0))}
-                    </a>
-                    <span class="pp-Metric">👍 {int(p.get('reactions_plus_one', 0))} &nbsp;|&nbsp; 💬 {int(p.get('comments_count', 0))}</span>
+                    <div>
+                        {cat_badge}
+                        <a href="{esc(p.get('issue_url'))}" target="_blank" rel="noopener" class="pp-link">
+                            {esc(p.get('repo_full_name'))}#{int(p.get('issue_number', 0))}
+                        </a>
+                    </div>
+                    <span class="pp-metric">👍 {int(p.get('reactions_plus_one', 0))} &nbsp;|&nbsp; 💬 {int(p.get('comments_count', 0))}</span>
                 </div>
                 <h4>{esc(p.get('title'))}</h4>
                 <p class="muted">{esc(p.get('body_excerpt') or 'No body excerpt.')}</p>
+                {comments_html}
             </div>
             """
         )
-    pain_points_html = "".join(pp_cards) or '<div class="card"><p class="muted">No open issue pain points mined yet.</p></div>'
+    pain_points_html = "".join(pp_cards) or '<div class="card"><p class="muted">No verified open issue pain points mined.</p></div>'
 
     # 4. System Design & Mermaid
     sys_design = state.get("system_design") or {}
-    topology_mermaid = (sys_design.get("topology_mermaid") or "").strip() or default_topology_mermaid(
-        state.get("project_name") or "PreFlight"
-    )
-    sequence_mermaid = (sys_design.get("sequence_mermaid") or "").strip() or default_sequence_mermaid(
-        state.get("project_name") or "PreFlight"
-    )
+    topology_mermaid = (sys_design.get("topology_mermaid") or "").strip()
+    sequence_mermaid = (sys_design.get("sequence_mermaid") or "").strip()
     options_matrix = sys_design.get("options_matrix") or []
     if options_matrix:
         opt_rows = "".join(
@@ -236,15 +376,10 @@ def build_html(
     if impl_steps:
         steps_html = "<ol class='step-list'>" + "".join(f"<li>{esc(s)}</li>" for s in impl_steps) + "</ol>"
     else:
-        steps_html = """
-        <ol class="step-list">
-            <li>Run <code>/to-spec</code> to publish the finalized specification from this Blueprint.</li>
-            <li>Run <code>/to-tickets</code> to slice the spec into vertical tracer-bullet tickets with blocking edges.</li>
-            <li>Execute each vertical slice with <code>/implement</code> and <code>/tdd</code> (red-green-refactor).</li>
-        </ol>
-        """
+        steps_html = '<p class="muted">No implementation steps recorded.</p>'
 
     stack_badges = "".join(f'<span class="stack-pill">{esc(s)}</span>' for s in stack_items) or '<span class="stack-pill">TBD</span>'
+    spec_json_escaped = json.dumps(spec_markdown)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -305,10 +440,22 @@ def build_html(
     border-radius: 12px;
     padding: 1.25rem 1.5rem;
     text-align: right;
-    min-width: 220px;
+    min-width: 240px;
   }}
   .score-number {{ font-size: 2.5rem; font-weight: 800; color: {gate_badge_color}; line-height: 1.1; }}
   .score-label {{ font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }}
+  .copy-btn {{
+    margin-top: 0.75rem;
+    background: #1e293b;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    padding: 0.4rem 0.85rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: 600;
+  }}
+  .copy-btn:hover {{ background: var(--accent); color: #0f172a; }}
   .tabs {{
     display: flex;
     gap: 0.5rem;
@@ -367,6 +514,7 @@ def build_html(
     border-radius: 6px;
     font-size: 0.75rem;
     font-weight: 700;
+    margin-right: 0.4rem;
   }}
   .badge-green {{ background: #10b98122; color: #34d399; border: 1px solid #10b98155; }}
   .badge-red {{ background: #ef444422; color: #f87171; border: 1px solid #ef444455; }}
@@ -379,6 +527,20 @@ def build_html(
   a:hover {{ text-decoration: underline; }}
   .muted {{ color: var(--muted); font-size: 0.9rem; }}
   .rejected {{ color: #fca5a5; margin-top: 0.35rem; }}
+  .comments-box {{
+    margin-top: 0.65rem;
+    padding-top: 0.55rem;
+    border-top: 1px dashed var(--border);
+  }}
+  .comment-quote {{
+    font-size: 0.85rem;
+    color: #cbd5e1;
+    background: #0f172a;
+    padding: 0.45rem 0.65rem;
+    border-radius: 6px;
+    margin-top: 0.35rem;
+    border-left: 3px solid var(--accent);
+  }}
   .mermaid-box {{
     background: #0f172a;
     border: 1px solid var(--border);
@@ -386,6 +548,16 @@ def build_html(
     padding: 1.5rem;
     overflow-x: auto;
     margin-top: 0.75rem;
+  }}
+  details.raw-mermaid {{ margin-top: 0.5rem; font-size: 0.82rem; color: var(--muted); }}
+  details.raw-mermaid pre {{
+    background: #0b0f19;
+    padding: 0.75rem;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    margin-top: 0.35rem;
+    color: #e2e8f0;
+    overflow-x: auto;
   }}
   .step-list {{ padding-left: 1.4rem; }}
   .step-list li {{ margin-bottom: 0.6rem; }}
@@ -407,7 +579,8 @@ def build_html(
     <div class="score-box">
       <div class="score-label">{gate_badge_text}</div>
       <div class="score-number">{readiness_score}%</div>
-      <div class="muted">5-Dimension Rubric</div>
+      <div class="muted">Evidence-Verified Rubric</div>
+      <button class="copy-btn" onclick="copySpecMarkdown(this)">Copy Spec Markdown (.preflight/SPEC.md)</button>
     </div>
   </header>
 
@@ -415,7 +588,7 @@ def build_html(
     <button class="tab-btn active" onclick="showTab('tab-scorecard', this)">1. Readiness &amp; Red-Team</button>
     <button class="tab-btn" onclick="showTab('tab-prior-art', this)">2. Prior-Art &amp; Pain Points ({len(incumbents) + len(graveyard)})</button>
     <button class="tab-btn" onclick="showTab('tab-design', this)">3. System Topology &amp; Sequence</button>
-    <button class="tab-btn" onclick="showTab('tab-ledger', this)">4. Decision Ledger ({len(decisions)}) &amp; Next Steps</button>
+    <button class="tab-btn" onclick="showTab('tab-ledger', this)">4. Decision Ledger ({len(decisions)}) &amp; Plan</button>
   </div>
 
   <!-- TAB 1: SCORECARD & RED TEAM -->
@@ -430,7 +603,7 @@ def build_html(
 
   <!-- TAB 2: PRIOR ART & PAIN POINTS -->
   <section id="tab-prior-art" class="tab-panel">
-    <h2 class="section-title">GitHub Prior-Art Matrix (Active Incumbents vs. Graveyard Repos)</h2>
+    <h2 class="section-title">GitHub Prior-Art Matrix (Active Incumbents vs. Graveyard / Dormant Repos)</h2>
     <div class="card" style="overflow-x:auto">
       <table>
         <thead>
@@ -449,7 +622,7 @@ def build_html(
       </table>
     </div>
 
-    <h2 class="section-title">Pain-Point Mine (Top-Voted Open Issues from Incumbents)</h2>
+    <h2 class="section-title">Pain-Point Mine (Verified Bugs &amp; Top-Voted Open Issues + Top Comments)</h2>
     <div class="grid-2">
       {pain_points_html}
     </div>
@@ -460,11 +633,19 @@ def build_html(
     <h2 class="section-title">System Topology Diagram</h2>
     <div class="mermaid-box">
       <pre class="mermaid">{esc(topology_mermaid)}</pre>
+      <details class="raw-mermaid">
+        <summary>View raw Mermaid source (offline fallback)</summary>
+        <pre>{esc(topology_mermaid)}</pre>
+      </details>
     </div>
 
     <h2 class="section-title">Core Request Lifecycle (Sequence Diagram)</h2>
     <div class="mermaid-box">
       <pre class="mermaid">{esc(sequence_mermaid)}</pre>
+      <details class="raw-mermaid">
+        <summary>View raw Mermaid source (offline fallback)</summary>
+        <pre>{esc(sequence_mermaid)}</pre>
+      </details>
     </div>
 
     <h2 class="section-title">Architecture Trade-Off Matrix</h2>
@@ -490,7 +671,7 @@ def build_html(
     <h2 class="section-title">Decision Ledger (Locked ADRs &amp; Rejected Paths)</h2>
     {decisions_html}
 
-    <h2 class="section-title">Tracer-Bullet Implementation Plan &amp; Handoff</h2>
+    <h2 class="section-title">Implementation Plan</h2>
     <div class="card">
       {steps_html}
     </div>
@@ -498,12 +679,22 @@ def build_html(
 </div>
 
 <script>
-  mermaid.initialize({{ startOnLoad: true, theme: 'dark', securityLevel: 'loose' }});
+  const SPEC_MARKDOWN = {spec_json_escaped};
+  if (typeof mermaid !== 'undefined') {{
+    mermaid.initialize({{ startOnLoad: true, theme: 'dark', securityLevel: 'loose' }});
+  }}
   function showTab(tabId, btn) {{
     document.querySelectorAll('.tab-panel').forEach(el => el.classList.remove('active'));
     document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
     document.getElementById(tabId).classList.add('active');
     btn.classList.add('active');
+  }}
+  function copySpecMarkdown(btn) {{
+    navigator.clipboard.writeText(SPEC_MARKDOWN).then(() => {{
+      const orig = btn.textContent;
+      btn.textContent = "Copied SPEC.md to Clipboard!";
+      setTimeout(() => {{ btn.textContent = orig; }}, 2000);
+    }});
   }}
 </script>
 </body>
@@ -512,34 +703,62 @@ def build_html(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Render PreFlight HTML Blueprint")
+    parser = argparse.ArgumentParser(description="Render PreFlight HTML Blueprint and SPEC.md")
     parser.add_argument("--workspace", default=".", help="Workspace root directory")
     parser.add_argument("--output", default="blueprint_report.html", help="Output HTML filename")
-    parser.add_argument("--force", action="store_true", help="Bypass Readiness Gate check")
+    parser.add_argument(
+        "--spec-output",
+        default=".preflight/SPEC.md",
+        help="Output Markdown specification path (relative to workspace)",
+    )
+    parser.add_argument("--force", action="store_true", help="Bypass Readiness Gate check (marks output as DRAFT)")
 
     args = parser.parse_args(argv)
     workspace = Path(args.workspace).resolve()
     state = load_state(workspace)
-    score, unlocked = compute_readiness(state)
+    score, unlocked, missing = evaluate_gate(state, workspace)
 
     if not unlocked and not args.force:
-        zero_dims = [
-            d for d in DIMENSIONS if int(state.get("dimensions", {}).get(d, {}).get("score", 0)) == 0
-        ]
         print(
-            f"ERROR: Readiness Gate is LOCKED ({score}% / 80% required; untouched dimensions: {zero_dims}).\n"
-            "Complete the Grilling Session across all 5 dimensions or pass `--force` if the user explicitly requested an early override.",
+            f"ERROR: Readiness Gate is LOCKED ({score}% / 80% required).\n"
+            "Missing gate requirements:\n"
+            + "\n".join(f"  - {m}" for m in missing),
             file=sys.stderr,
         )
         return 2
 
+    sys_design = state.get("system_design") or {}
+    topology_mermaid = (sys_design.get("topology_mermaid") or "").strip()
+    sequence_mermaid = (sys_design.get("sequence_mermaid") or "").strip()
+    if (not topology_mermaid or not sequence_mermaid) and not args.force:
+        print(
+            "ERROR: `system_design.topology_mermaid` and `system_design.sequence_mermaid` must be populated "
+            "via `state.py set-design` before rendering the Blueprint (refusing to render generic placeholder diagrams).",
+            file=sys.stderr,
+        )
+        return 2
+
+    if not topology_mermaid:
+        topology_mermaid = "flowchart LR\n    Draft[\"Draft Topology (Pending set-design)\"]"
+        sys_design["topology_mermaid"] = topology_mermaid
+    if not sequence_mermaid:
+        sequence_mermaid = "sequenceDiagram\n    Note over User: Draft Sequence (Pending set-design)"
+        sys_design["sequence_mermaid"] = sequence_mermaid
+
     decisions = load_decisions(workspace)
     prior_art = load_prior_art(workspace)
-    html_content = build_html(state, decisions, prior_art)
+    spec_md = build_spec_markdown(state, decisions, prior_art)
+    html_content = build_html(state, decisions, prior_art, spec_md)
 
     out_path = workspace / args.output
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(html_content, encoding="utf-8")
-    print(f"Blueprint rendered successfully: {out_path} (Readiness: {score}%)")
+
+    spec_path = workspace / args.spec_output
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text(spec_md + "\n", encoding="utf-8")
+
+    print(f"Blueprint rendered: {out_path} | Spec exported: {spec_path} (Readiness: {score}%)")
     return 0
 
 
