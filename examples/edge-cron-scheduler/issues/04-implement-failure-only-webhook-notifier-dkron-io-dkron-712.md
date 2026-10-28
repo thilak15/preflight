@@ -30,6 +30,6 @@
 - [ ] Deliverable verified: **Implement failure-only webhook notifier (`dkron-io/dkron#712`), 50MB FTS5 log ring-buffer pruning**.
 - [ ] Deliverable verified: **asynchronous mTLS `sync_outbox` hub pusher (`dagucloud/dagu#1260`)**.
 - [ ] Enforces **ADR-0001 (Autonomous Per-Node SQLite WAL Over Embedded Raft/etcd)**: Each edge node runs an autonomous scheduler backed by local SQLite3 in WAL mode with a single-writer batching goroutine and an asynchronous mTLS `sync_outbox` queue.
-- [ ] Enforces **ADR-0002 (Linux cgroups v2 Per-Step Isolation and Node Concurrency Caps)**: Place every DAG step in a dedicated `/sys/fs/cgroup/edgecron/<run_id>/<step_id>` scope enforcing `memory.max`, `cpu.max`, and `cgroup.kill` on timeout, gated by a node-level `max_parallel_jobs` semaphore (`dkron-io/dkron#966`).
 - [ ] Stress-tested against **[CRITICAL] Post-Outage Reboot Stampede on High-Frequency Schedules**: Require an explicit `catchup_policy` (`skip`, `latest_only`, or `backfill_serial` with date bounds as requested in `dagucloud/dagu#695`), defaulting to `latest_only`.
+- [ ] Verifies memory failure guard: Unbounded disk growth on 8GB industrial eMMC flash -> Mitigated by 50MB per-DAG ring buffer and automatic 30-day run history pruning.
 - [ ] Automated unit/integration tests for `implement-failure-only-webhook` pass with zero regressions.

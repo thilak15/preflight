@@ -30,7 +30,6 @@
 - [ ] Deliverable verified: **Bootstrap Go 1.23 module, pure-Go SQLite WAL schema (`dag_runs`, `step_attempts`, `step_logs_fts`, `sync_outbox`)**.
 - [ ] Deliverable verified: **single-writer 100ms batch channel (`ADR-0001`)**.
 - [ ] Enforces **ADR-0001 (Autonomous Per-Node SQLite WAL Over Embedded Raft/etcd)**: Each edge node runs an autonomous scheduler backed by local SQLite3 in WAL mode with a single-writer batching goroutine and an asynchronous mTLS `sync_outbox` queue.
-- [ ] Enforces **ADR-0002 (Linux cgroups v2 Per-Step Isolation and Node Concurrency Caps)**: Place every DAG step in a dedicated `/sys/fs/cgroup/edgecron/<run_id>/<step_id>` scope enforcing `memory.max`, `cpu.max`, and `cgroup.kill` on timeout, gated by a node-level `max_parallel_jobs` semaphore (`dkron-io/dkron#966`).
-- [ ] Stress-tested against **[CRITICAL] Post-Outage Reboot Stampede on High-Frequency Schedules**: Require an explicit `catchup_policy` (`skip`, `latest_only`, or `backfill_serial` with date bounds as requested in `dagucloud/dagu#695`), defaulting to `latest_only`.
+- [ ] Verifies memory failure guard: SQLITE_BUSY lock contention under 50+ concurrent step heartbeats -> Mitigated by funneling all writes through a single Go channel batching commits every 100ms.
 - [ ] Integrates Day-1 tool **modernc-org/sqlite + flc1125/go-cron** (`go.sum`) for cgo-free embedded sqlite wal engine and cron schedule parser.
 - [ ] Automated unit/integration tests for `bootstrap-go-1-23-module-pure-go` pass with zero regressions.

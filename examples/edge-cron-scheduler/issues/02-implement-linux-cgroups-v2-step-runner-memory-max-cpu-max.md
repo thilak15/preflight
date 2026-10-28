@@ -29,9 +29,8 @@
 
 - [ ] Deliverable verified: **Implement Linux cgroups v2 step runner (`memory.max`, `cpu.max`, `cgroup.kill`) with `Setpgid` fallback**.
 - [ ] Deliverable verified: **per-node `max_parallel_jobs` semaphore (`ADR-0002`, `dkron-io/dkron#966`)**.
-- [ ] Enforces **ADR-0001 (Autonomous Per-Node SQLite WAL Over Embedded Raft/etcd)**: Each edge node runs an autonomous scheduler backed by local SQLite3 in WAL mode with a single-writer batching goroutine and an asynchronous mTLS `sync_outbox` queue.
 - [ ] Enforces **ADR-0002 (Linux cgroups v2 Per-Step Isolation and Node Concurrency Caps)**: Place every DAG step in a dedicated `/sys/fs/cgroup/edgecron/<run_id>/<step_id>` scope enforcing `memory.max`, `cpu.max`, and `cgroup.kill` on timeout, gated by a node-level `max_parallel_jobs` semaphore (`dkron-io/dkron#966`).
-- [ ] Stress-tested against **[CRITICAL] Post-Outage Reboot Stampede on High-Frequency Schedules**: Require an explicit `catchup_policy` (`skip`, `latest_only`, or `backfill_serial` with date bounds as requested in `dagucloud/dagu#695`), defaulting to `latest_only`.
+- [ ] Enforces **ADR-0001 (Autonomous Per-Node SQLite WAL Over Embedded Raft/etcd)**: Each edge node runs an autonomous scheduler backed by local SQLite3 in WAL mode with a single-writer batching goroutine and an asynchronous mTLS `sync_outbox` queue.
 - [ ] Stress-tested against **[HIGH] Unprivileged Or cgroup v1 Kernel Fallback**: Run a startup pre-check verifying `/sys/fs/cgroup/cgroup.controllers` delegation; fail fast with a clear `systemd` `Delegate=yes` unit snippet or explicitly require `--allow-pgid-fallback` (`Setpgid: true` + `PR_SET_PDEATHSIG`).
 - [ ] Integrates Day-1 tool **Docker (Dockerfile)** (`Dockerfile`) for multi-stage static binary build and privileged cgroups v2 integration test container.
 - [ ] Automated unit/integration tests for `implement-linux-cgroups-v2-step` pass with zero regressions.

@@ -29,7 +29,6 @@
 
 - [ ] Deliverable verified: **Implement DAG YAML parser, cron schedule planner (`flc1125/go-cron`)**.
 - [ ] Deliverable verified: **power-loss `catchup_policy` (`skip`, `latest_only`, `backfill_serial`, `dagucloud/dagu#695`)**.
-- [ ] Enforces **ADR-0002 (Linux cgroups v2 Per-Step Isolation and Node Concurrency Caps)**: Place every DAG step in a dedicated `/sys/fs/cgroup/edgecron/<run_id>/<step_id>` scope enforcing `memory.max`, `cpu.max`, and `cgroup.kill` on timeout, gated by a node-level `max_parallel_jobs` semaphore (`dkron-io/dkron#966`).
 - [ ] Stress-tested against **[CRITICAL] Post-Outage Reboot Stampede on High-Frequency Schedules**: Require an explicit `catchup_policy` (`skip`, `latest_only`, or `backfill_serial` with date bounds as requested in `dagucloud/dagu#695`), defaulting to `latest_only`.
 - [ ] Integrates Day-1 tool **modernc-org/sqlite + flc1125/go-cron** (`go.sum`) for cgo-free embedded sqlite wal engine and cron schedule parser.
 - [ ] Automated unit/integration tests for `implement-dag-yaml-parser-cron` pass with zero regressions.

@@ -45,19 +45,16 @@ Clone the repository and install the self-contained skill into your agent's skil
 git clone https://github.com/thilak15/preflight.git
 cd preflight
 
-# Option A: Live Symlink (Recommended for local development)
-./scripts/link-skills.sh
-
-# Option B: Portable Copy (Fallback for machines without symlink support)
+# Portable Copy Install (Standard)
 cp -R skills/preflight ~/.claude/skills/preflight
 cp -R skills/preflight ~/.agents/skills/preflight
 cp -R skills/preflight ~/.gemini/config/skills/preflight
 ```
 
-#### Updating & Uninstalling
-- **Update (Live Symlink):** Run `git pull` in your `preflight` checkout. The installed skill points directly into your clone, so prompt, doc, and script changes take effect immediately without re-copying.
-- **Update (Copied):** Re-run the `cp -R` commands after pulling.
-- **Uninstall:** Remove the symlinks or copied skill directories:
+#### Updating, Uninstalling & Contributor Dev Setup
+- **Update:** Pull the latest changes (`git pull`) and re-run the `cp -R` commands above.
+- **Contributor Dev Note (Optional Live Symlink):** If you are actively hacking on PreFlight's own prompts or scripts inside this repository and want edits to reflect immediately without re-copying, you can run `./scripts/link-skills.sh` (`--force` to replace an existing copy).
+- **Uninstall:** Remove the installed skill directories:
   ```bash
   rm -rf ~/.claude/skills/preflight ~/.agents/skills/preflight ~/.gemini/config/skills/preflight
   ```

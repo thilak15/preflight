@@ -1315,6 +1315,36 @@ class TestArchitectureDeepening(unittest.TestCase):
         self.assertEqual(rl["remaining"], 27)
         self.assertEqual(rl["limit"], 30)
 
+    def test_no_unreachable_code_in_scripts_or_tests(self) -> None:
+        """AST static check ensuring no unreachable statements follow return/raise/break/continue."""
+        import ast
+
+        TERMINAL_NODES = (ast.Return, ast.Raise, ast.Break, ast.Continue)
+        root_dir = Path(__file__).resolve().parent.parent
+        py_files = list((root_dir / "skills" / "preflight" / "scripts").glob("*.py")) + list(
+            (root_dir / "tests").glob("*.py")
+        )
+        violations: list[str] = []
+
+        def check_body(stmts: list[ast.stmt], filepath: Path) -> None:
+            for idx, stmt in enumerate(stmts):
+                if isinstance(stmt, TERMINAL_NODES) and idx + 1 < len(stmts):
+                    next_stmt = stmts[idx + 1]
+                    violations.append(
+                        f"{filepath.name}:{next_stmt.lineno} unreachable statement ({type(next_stmt).__name__}) after {type(stmt).__name__} at line {stmt.lineno}"
+                    )
+                    break
+
+        for py_file in py_files:
+            tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
+            for node in ast.walk(tree):
+                for attr in ("body", "orelse", "finalbody"):
+                    block = getattr(node, attr, None)
+                    if isinstance(block, list) and all(isinstance(x, ast.stmt) for x in block):
+                        check_body(block, py_file)
+
+        self.assertEqual(violations, [], f"Unreachable code detected: {violations}")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -596,37 +596,6 @@ def evaluate_gate(state: dict[str, Any], workspace: Path | None = None) -> GateV
     state["missing_gate_requirements"] = missing
     return GateVerdict(score=total, unlocked=unlocked, missing=missing, is_draft=not unlocked)
 
-    if not (state.get("tooling_recommendations") or []):
-        missing.append("At least 1 Stack Explained tool entry (`add-tool`) is required")
-
-    if not (state.get("red_team_critiques") or []):
-        missing.append("At least 1 Red-Team Critique (`add-critique`) is required")
-
-    sys_design = state.get("system_design") or {}
-    if not (sys_design.get("topology_mermaid") or "").strip() or not (sys_design.get("sequence_mermaid") or "").strip():
-        missing.append(
-            "Both `topology_mermaid` and `sequence_mermaid` must be populated (`set-design --topology ... --sequence ...`)"
-        )
-
-    if workspace is not None:
-        prior_art = load_prior_art(workspace)
-        has_repos = bool(
-            prior_art
-            and ((prior_art.get("active_incumbents") or []) or (prior_art.get("graveyard_repos") or []))
-        )
-        if not has_repos:
-            missing.append("Prior-Art Scout (`scout.py`) has not been run (.preflight/prior-art.json missing or empty)")
-
-        decisions = load_decisions(workspace)
-        if not decisions:
-            missing.append("At least 1 Architecture Decision Record (`add-decision`) is required")
-
-    unlocked = len(missing) == 0
-    state["readiness_score"] = total
-    state["readiness_unlocked"] = unlocked
-    state["missing_gate_requirements"] = missing
-    return GateVerdict(score=total, unlocked=unlocked, missing=missing, is_draft=not unlocked)
-
 
 def compute_readiness(state: dict[str, Any], workspace: Path | None = None) -> tuple[int, bool]:
     verdict = evaluate_gate(state, workspace)
