@@ -1,6 +1,6 @@
 <div align="center">
 
-# ✈️ PreFlight
+# PreFlight
 
 **Validate your architecture, scout GitHub prior art, lock your stack, and generate ready-to-code tickets — before writing a single line of code.**
 
@@ -9,7 +9,7 @@
 [![Dependencies](https://img.shields.io/badge/Dependencies-Zero%20(Stdlib%20Only)-10b981)](#1-install)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
-[**What It Does**](#-what-preflight-does) · [**Quick Start**](#-quick-start) · [**5-Dimension Gate**](#-the-5-dimension-readiness-gate) · [**Generated Artifacts**](#-what-gets-generated) · [**Case Study**](./examples/edge-cron-scheduler/CASE_STUDY.md) · [**CLI Reference**](#-cli-reference) · [**Changelog**](./CHANGELOG.md)
+[**What It Does**](#what-preflight-does) · [**Quick Start**](#quick-start) · [**5-Dimension Gate**](#the-5-dimension-readiness-gate) · [**Generated Artifacts**](#what-gets-generated) · [**GitHub Issues Export**](#exporting-tickets-to-github-issues) · [**Case Study**](./examples/edge-cron-scheduler/CASE_STUDY.md) · [**CLI Reference**](#cli-reference) · [**Changelog**](./CHANGELOG.md)
 
 </div>
 
@@ -23,19 +23,19 @@ Most AI coding assistants act like eager "yes-men": pitch an idea and they immed
 
 ---
 
-## ✨ What PreFlight Does
+## What PreFlight Does
 
 | Stage | Capability | How It Works |
 | :--- | :--- | :--- |
-| **1. Interrogate** | **Socratic Frontier Grilling** | Challenges your idea across 5 dimensions (`Problem`, `Scope`, `Memory`, `Bottlenecks`, `Differentiation`) with concrete `➡️` recommended answers. |
-| **2. Scout** | **GitHub Prior-Art & Pain-Point Miner** | Queries GitHub (`-q`, `--topic`, `-t`) for **Active Incumbents**, **Dormant/Graveyard Repos** ($>365\text{d}$ inactivity heuristic), **OSS Building Blocks**, and top-voted open issues + developer comments. |
-| **3. Inspect** | **"Stack Explained" (`Now` vs. `Later`)** | Inspects real repo config files (`pyproject.toml`, `Dockerfile`, `.github/workflows`, `.pre-commit-config.yaml`, `go.sum`, `Cargo.lock`) and separates **`✅ Verified`** proofs from **`⚠️ Claimed / Unverified`** recommendations. |
+| **1. Interrogate** | **Socratic Frontier Grilling** | Challenges your idea across 5 dimensions (`Problem`, `Scope`, `Memory`, `Bottlenecks`, `Differentiation`) with concrete recommended answers. |
+| **2. Scout** | **GitHub Prior-Art & Pain-Point Miner** | Queries GitHub (`-q`, `--topic`, `-t`) for **Active Incumbents**, **Dormant/Graveyard Repos** (>365d inactivity heuristic), **OSS Building Blocks**, and top-voted open issues + developer comments. |
+| **3. Inspect** | **"Stack Explained" (`Now` vs. `Later`)** | Inspects real repo config files (`pyproject.toml`, `Dockerfile`, `.github/workflows`, `.pre-commit-config.yaml`, `go.sum`, `Cargo.lock`) and separates **Verified** proofs from **Claimed / Unverified** recommendations. |
 | **4. Advise** | **Memory & Agent Communication** | Supports primary + secondary strategies (`stateless`, `transactional-db`, `lexical-fts`, `rag-vector-db`, `hybrid-search`, `episodic-agent-state`), handoff schemas, and memory failure modes. |
-| **5. Compile** | **Blueprint, Spec & Ordered Tickets** | Enforces an **80% Evidence Gate**, then compiles `blueprint_report.html`, `.preflight/SPEC.md`, `.preflight/STACK.md`, and ordered vertical-slice tickets in `.preflight/issues/01-*.md`. |
+| **5. Compile** | **Blueprint, Spec & Ordered Tickets** | Enforces an **80% Evidence Gate**, then compiles `blueprint_report.html`, `.preflight/SPEC.md`, `.preflight/STACK.md`, and ordered vertical-slice tickets (`.preflight/issues/01-*.md` or directly to GitHub Issues). |
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Install
 
@@ -78,21 +78,52 @@ python3 skills/preflight/scripts/state.py --workspace . reset
 
 ---
 
-## 🧭 Workflow Overview
+## Exporting Tickets to GitHub Issues
+
+Once the Readiness Gate unlocks and the blueprint is rendered, you can export your implementation tickets directly to GitHub Issues so your agent and team can track work on GitHub rather than only in local files:
+
+### Step 1: Commit and push architecture artifacts
+Commit and push the generated specification, stack, and decision ledger first so the links inside GitHub issue headers resolve cleanly:
+```bash
+git add .preflight/ docs/adr/ GLOSSARY.md
+git commit -m "docs(preflight): architecture spec, stack explained, and adr ledger"
+git push origin main
+```
+
+### Step 2: Export tickets directly to GitHub Issues
+```bash
+python3 skills/preflight/scripts/state.py --workspace . export-github-issues --repo <owner/repo>
+```
+
+### What this does:
+- **Verbatim Acceptance Criteria**: Every issue body receives the complete, unshortened acceptance criteria from the ticket file without truncation or summarization.
+- **Architecture References Header**: Automatically prepends clickable GitHub links to `.preflight/SPEC.md`, `.preflight/STACK.md`, `docs/adr/`, and `GLOSSARY.md` at the top of each issue.
+- **Labels**: Automatically ensures and applies labels `ready-for-agent` and `needs-triage` (created via `gh label create --force` if they do not exist).
+- **Sequential Creation and Dynamic Dependency Resolution**: Creates issues in order (`01` to `NN`). As each upstream issue is created and assigned a GitHub issue number (for example, `#1`), subsequent tickets dynamically resolve their `Blocked by:` field to `#1` before creation.
+- **Index Synchronization**: Automatically updates local `.preflight/issues/INDEX.md` with links pointing directly to the live GitHub issue URLs.
+- **Verification Summary**: Reports all created issue URLs and prints the complete text of Issue #1 so you can immediately inspect its acceptance criteria.
+- **Dry-Run Preview**: Add `--dry-run` to preview the generated issues and dynamic dependencies without calling the GitHub API:
+  ```bash
+  python3 skills/preflight/scripts/state.py --workspace . export-github-issues --repo <owner/repo> --dry-run
+  ```
+
+---
+
+## Workflow Overview
 
 ```mermaid
 flowchart LR
-    A(["💡 Idea Pitch"]) --> B["1. Socratic Grilling\n(state.py)"]
+    A(["Idea Pitch"]) --> B["1. Socratic Grilling\n(state.py)"]
     B --> C["2. GitHub & Config Scout\n(scout.py + cache.db)"]
     C --> D["3. Stack Explained &\nMemory Advisor"]
-    D --> E{"🔒 80% Evidence\nGate Unlocked?"}
+    D --> E{"80% Evidence\nGate Unlocked?"}
     E -->|"No"| B
-    E -->|"Yes"| F["4. Blueprint + SPEC.md +\nOrdered Tickets (.preflight/issues/)"]
+    E -->|"Yes"| F["4. Blueprint + SPEC.md +\nOrdered Tickets (.preflight/issues/ / GitHub Issues)"]
 ```
 
 ---
 
-## 🛡️ The 5-Dimension Readiness Gate
+## The 5-Dimension Readiness Gate
 
 Unlike prompt-only skills where an LLM can grade itself `100%` with one-line summaries, `state.py` enforces **programmatic anti-theater checks** before unlocking Blueprint generation:
 
@@ -116,7 +147,7 @@ Unlike prompt-only skills where an LLM can grade itself `100%` with one-line sum
 
 ---
 
-## 📦 What Gets Generated
+## What Gets Generated
 
 When the Readiness Gate unlocks and `render_blueprint.py` runs, PreFlight produces a complete engineering package:
 
@@ -124,7 +155,7 @@ When the Readiness Gate unlocks and `render_blueprint.py` runs, PreFlight produc
 | :--- | :--- |
 | **`blueprint_report.html`** | Interactive 5-tab dark-mode HTML dashboard (Scorecard, Prior-Art & Pain Points, Stack Explained & Memory, Mermaid Diagrams, ADR Ledger). *Note: Rendered diagrams load Mermaid.js from `cdn.jsdelivr.net` (internet required); expandable raw Mermaid source blocks are included on every diagram.* |
 | **`.preflight/SPEC.md`** | Clean, git-ready system design specification. |
-| **`.preflight/STACK.md`** | **"Stack Explained"** table (`Now` vs. `Later`, **`✅ Verified`** vs. **`⚠️ Claimed / Unverified`** config proof, alternatives) + Primary & Secondary Memory architecture. |
+| **`.preflight/STACK.md`** | **"Stack Explained"** table (`Now` vs. `Later`, **Verified** vs. **Claimed / Unverified** config proof, alternatives) + Primary & Secondary Memory architecture. |
 | **`.preflight/issues/01-*.md`** | Individual, ordered vertical-slice tickets (`01`, `02`, `03`...) with ticket-specific acceptance criteria derived from each step, relevant ADRs, and critiques. |
 | **GitHub Issues (`gh`)** | Exported directly to target repo via `state.py export-github-issues --repo <owner/repo>` with labels `ready-for-agent` and `needs-triage`, verbatim acceptance criteria, references header, and dynamic `Blocked by: #NN` dependency numbers. |
 | **`docs/adr/NNNN-*.md`** | Permanent Architecture Decision Records with rejected alternatives. |
@@ -132,19 +163,19 @@ When the Readiness Gate unlocks and `render_blueprint.py` runs, PreFlight produc
 
 ---
 
-## 📖 Case Study (`examples/edge-cron-scheduler/`)
+## Case Study (`examples/edge-cron-scheduler/`)
 
 See an illustrative walkthrough backed by a **real committed `scout.py` dataset** ([`examples/edge-cron-scheduler/.preflight/prior-art.json`](./examples/edge-cron-scheduler/.preflight/prior-art.json)), showing how PreFlight pivoted an embedded-Raft cron pitch into an autonomous **SQLite WAL + Linux `cgroups v2`** architecture after mining real issues like `dkron-io/dkron#1001`, `dkron-io/dkron#966`, and `dagucloud/dagu#1260`:
 
-- 📄 **[Read the Case Study Walkthrough](./examples/edge-cron-scheduler/CASE_STUDY.md)**
-- 🔍 **[Inspect Committed `prior-art.json`](./examples/edge-cron-scheduler/.preflight/prior-art.json)** & **[`state.json`](./examples/edge-cron-scheduler/.preflight/state.json)**
-- 📋 **[View the Exported `SPEC.md`](./examples/edge-cron-scheduler/SPEC.md)** & **[`STACK.md`](./examples/edge-cron-scheduler/STACK.md)**
-- 🎟️ **[Browse the Ordered Tickets (`issues/INDEX.md`)](./examples/edge-cron-scheduler/issues/INDEX.md)**
-- 🖥️ **[Open `blueprint_report.html`](./examples/edge-cron-scheduler/blueprint_report.html)**
+- [Read the Case Study Walkthrough](./examples/edge-cron-scheduler/CASE_STUDY.md)
+- [Inspect Committed `prior-art.json`](./examples/edge-cron-scheduler/.preflight/prior-art.json) & [`state.json`](./examples/edge-cron-scheduler/.preflight/state.json)
+- [View the Exported `SPEC.md`](./examples/edge-cron-scheduler/SPEC.md) & [`STACK.md`](./examples/edge-cron-scheduler/STACK.md)
+- [Browse the Ordered Tickets (`issues/INDEX.md`)](./examples/edge-cron-scheduler/issues/INDEX.md)
+- [Open `blueprint_report.html`](./examples/edge-cron-scheduler/blueprint_report.html)
 
 ---
 
-## 🛠️ CLI Reference
+## CLI Reference
 
 <details>
 <summary><strong>Click to expand full CLI commands (<code>state.py</code>, <code>scout.py</code>, <code>render_blueprint.py</code>)</strong></summary>
@@ -224,7 +255,7 @@ python3 skills/preflight/scripts/state.py --workspace . export-github-issues --r
 
 ---
 
-## 📂 Repository Layout
+## Repository Layout
 
 ```text
 preflight/
@@ -241,12 +272,12 @@ preflight/
 └── GLOSSARY.md                      # Domain vocabulary
 ```
 
-## 🧪 Testing
+## Testing
 
 ```bash
 python3 -m unittest discover -s tests -v
 ```
 
-## 📄 License
+## License
 
 Released under the [MIT License](./LICENSE).
